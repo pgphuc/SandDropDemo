@@ -1,0 +1,4 @@
+2026/06/26-17:56:30.566 e500 Creating DB C:\Users\Admin\Desktop\LevelEditorGuide\demo game\jelly3d_src\tools\.prof_1655513052\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Session Storage since it was missing.
+2026/06/26-17:56:30.572 e500 Reusing MANIFEST C:\Users\Admin\Desktop\LevelEditorGuide\demo game\jelly3d_src\tools\.prof_1655513052\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Session Storage/MANIFEST-000001
+2026/06/26-17:56:30.572 e500 Recovering log #3
+2026/06/26-17:56:30.573 e500 Reusing old log C:\Users\Admin\Desktop\LevelEditorGuide\demo game\jelly3d_src\tools\.prof_1655513052\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Session Storage/000003.log 

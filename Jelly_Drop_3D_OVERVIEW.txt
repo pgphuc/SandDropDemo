@@ -1,0 +1,326 @@
+================================================================================
+ JELLY DROP 3D — TÀI LIỆU BÀN GIAO (HANDOFF OVERVIEW)
+ Cập nhật: 2026-06-26
+================================================================================
+
+Tài liệu này để bạn (hoặc 1 session Claude khác) tiếp tục làm việc trên demo.
+Đọc hết phần 0–3 là đủ để bắt đầu sửa/đóng gói lại.
+
+--------------------------------------------------------------------------------
+*** CẬP NHẬT 2026-06-26 (bản vá #3 — băng chuyền PACK trong máng) — đọc TRƯỚC ***
+--------------------------------------------------------------------------------
+Tham chiếu hình mẫu: gameplay_1_game_2.mp4 — belt là MÁNG hình racetrack (vành
+khuyên giữa tường TRONG và tường NGOÀI), jelly xếp DÀY, ĐÈ/CHỒNG lên nhau, chạy
+vòng trong máng, chỉ rớt ra khi gặp lọ cùng màu.
+
+I) TĂNG SỐ JELLY TRÊN BELT ~7 LẦN: CFG.maxBeltCubes 46 -> 322. Pool belt cũng 322.
+II) JELLY PACK + ĐÈ LÊN NHAU (không còn 1 hàng cách quãng): viết lại hệ belt thành
+    MÔ PHỎNG VẬT LÝ 2D trong "máng" = vành khuyên elip:
+    - Mỗi cube có (th = góc quanh vòng, rho = vị trí NGANG 0..1 giữa tường trong/ngoài).
+    - Băng chuyền cuốn cả đám: th += omega*dt (omega=beltSpeed*TAU).
+    - packBeltCubes(): va chạm cube-cube (relaxation theo (th,rho), broadphase theo góc)
+      -> cube DỒN lại (đè nhau, minPairDist < cạnh cube) và TRẢI NGANG nhiều "hàng".
+    - rnd nhiều rho khi vào belt (enterBeltUnit) -> xếp nhiều hàng ngang ngay từ cửa.
+III) MÁNG LÀM TƯỜNG CHẶN: rho bị CLAMP về [0,1] mỗi frame = tường TRONG (rho=0) và
+    NGOÀI (rho=1). Cube KHÔNG tràn ra ngoài máng; chỉ rời máng khi tới cổng lọ cùng
+    màu rồi RỚT vào lọ (giữ nguyên hoạt ảnh drop của bản vá #2).
+    Đo kiểm: insideWalls=true (rho∈[0,1]), 95 cube trên belt, 22 bin góc có ≥2 cube
+    (nhiều hàng), minPairDist 0.156 < cạnh cube 0.225 (đè nhau). OK.
+
+HÌNH HỌC MÁNG ĐO TỪ MESH THẬT (không hard-code): buildBelt() -> measureBeltChannel()
+  lấy tâm + 3 trục local của belt (beltCtr, beltAxA/B/N), sample đỉnh mặt-trên để ra
+  oval (aMax,bMax) + cao độ. Suy ra CH{Ao,Bo (tường ngoài), Ai,Bi (tường trong),
+  heightN (cao độ ngồi), Rmaj (bán trục giữa cho cổng lọ)}. Đổi asset -> tự canh lại.
+  CFG.belt nay chỉ còn ASSET: {pos,size,depthRatio,tilt} (bỏ rx/rz/riderH cũ).
+  CFG.beltPack{collR,soft,iters,win}: bán kính va chạm, độ mềm đẩy, số vòng lặp, cửa sổ
+  góc broadphase. slotGateT dùng CH.Rmaj (cổng ở cung TRƯỚC: th=2π−acos(x/Rmaj)).
+  Hàm chính: measureBeltChannel, beltWorld(th,rho,lift), planarToThRho, packBeltCubes,
+  enterBeltUnit (chọn rho trống), tryFeedBelt (feed khi cửa máng còn chỗ).
+  __game expose thêm: CH, beltWorld, slotGateT, beltAxes. Test: tools/test_ride.js
+  (đo pack/tường), tools/test_drop.js (bắt frame rớt vào lọ).
+LƯU Ý HIỆU NĂNG: pack O(n·k) nhờ broadphase; 322 cube vẫn nhẹ trên GPU thật. Software-GL
+  (headless test) thì nặng hơn nhưng vẫn chạy. Pile fallers vẫn O(n²) như cũ.
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+*** CẬP NHẬT 2026-06-26 (bản vá #2 — 2 yêu cầu băng chuyền) — đọc TRƯỚC ***
+--------------------------------------------------------------------------------
+A) CUBE LUÔN CHẠY LÊN BĂNG CHUYỀN (kể cả CHƯA có lọ cùng màu):
+   - Trước: tryFeedBelt() chỉ tuồn cube lên belt khi đã có lọ active cùng màu ->
+     cube không có "nhà" bị KẸT trong đống ở miệng phễu.
+   - NAY: tryFeedBelt() lấy cube THẤP NHẤT trong đống và đưa lên belt BẤT KỂ đã có
+     lọ cùng màu hay chưa. Nếu có lọ -> giữ reservation; nếu CHƯA -> cube cứ CHẠY
+     vòng quanh belt và mỗi frame tự dò findTargetJar(color) cho tới khi 1 lọ cùng
+     màu xuất hiện (pickJarDef khi slot trống). Không có gì biến mất; mọi thứ luôn
+     di chuyển trên băng chuyền. (Đống chỉ còn khi belt đầy pool maxBeltCubes=46.)
+B) CUBE RƠI VÀO LỌ CÓ HOẠT ẢNH (không biến mất tức thì):
+   - Trước: tới cổng lọ -> deliverToJar() + releaseBeltCube() NGAY -> cube nháy mất.
+   - NAY: tới cổng -> set bc.drop={from,to} và cube RỚT THEO CUNG (arc + squash/plop)
+     từ mép belt xuống miệng lọ trong ~0.36s, xong mới deliverToJar() + nhả mesh.
+     (reservation giữ nguyên tới khi đáp -> không lố capacity. Cube đang drop vẫn nằm
+     trong beltCubes nên checkWin không thắng sớm.)
+C) CUBE CHẠY TRONG MÁNG CONG CỦA BĂNG CHUYỀN (không lệch ra ngoài hình oval):
+   - Đo hình học belt thật (tools/probe_belt.js): mặt trên (top face) của belt là 1
+     oval trong HỆ-LOCAL của belt với BÁN-TRỤC X≈2.77, Y≈0.74, mặt trên ở local z≈0.32.
+   - Chứng minh được beltPoint() vẽ oval local: local_x=rx*cos, local_y=-rz*sin,
+     local_z=riderH (hằng). Cũ rx=3.0, rz=1.3 -> rz=1.3 >> 0.74 nên cube văng RA NGOÀI
+     theo trục phụ (front/back). NAY CFG.belt rx=2.5, rz=0.6, riderH=0.44 -> cube nằm
+     GỌN trong máng (đo lại: outsideTrough=0 cube; ridingNoJar=18 cube chạy ok).
+   - Đã giảm wobble lateral 0.06->0.05 và bob 0.035->0.03 cho khít máng hẹp hơn.
+   Hàm/CFG đụng tới: CFG.belt{rx,rz,riderH}, tryFeedBelt(), update() vòng beltCubes
+   (thêm nhánh bc.drop). slotGateT vẫn dùng rx (cổng vẫn ở cung trước, sin>0).
+   Test mới: tools/test_ride.js (đo cube trong máng), tools/test_drop.js (bắt frame
+   cube đang rớt vào lọ), tools/probe_belt.js (đo bbox/oval belt).
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+*** CẬP NHẬT 2026-06-26 (bản vá theo 4 yêu cầu) — đọc trước phần dưới ***
+--------------------------------------------------------------------------------
+1) BUG "khối biến mất": trước đây cube không có lọ active cùng màu bị nhét vào
+   hàng đợi VÔ HÌNH (beltQueue2) -> trông như biến mất. NAY: cube RƠI VẬT LÝ và
+   CHẤT ĐỐNG (pile) THẤY ĐƯỢC ngay miệng phễu; chỉ trượt LÊN băng chuyền khi có
+   lọ active cùng màu còn chỗ (giữ reservation -> không kẹt belt, vẫn hội tụ WIN).
+2) Tranh lệch khung -> chỉnh CFG.cell=0.245, boardCenter.y=4.8 cho vừa "ô cửa"
+   của khung (đã canh bằng overlay tô khung màu hồng). Frame vẫn pos [0,4.4,..].
+3) Băng chuyền TOP-DOWN: CFG.belt.tilt=1.0 (trước 0.62) + pos/rx/rz mới ->
+   nhìn rõ cả vòng oval và toàn bộ cube đang chạy.
+4) VẬT LÝ rơi: cube chịu trọng lực, va chạm với các ô tranh CÒN LẠI (terrain) và
+   tường khung/phễu, lăn xuống, va chạm lẫn nhau (collideFallers) tạo ĐỐNG, rồi
+   từ từ tuồn vào belt. Trên belt vẫn wobble/squash/bob như jelly.
+   CFG mới: phys{g,rest,wallRest,fric,maxV,life}, funnel{chuteHalf}, feedFloorY.
+   Hàm mới: stepFaller, collideFallers, tryFeedBelt, funnelHalfAt, pickJarDef
+   (chọn lọ theo MÀU ĐANG CHỜ NHIỀU NHẤT khi slot trống -> chống deadlock).
+   Progress bar dời LÊN ĐỈNH (game.html .progWrap top:64px) cho thoáng vùng chơi.
+   __game expose thêm: scene,camera,frame,belt,beltPoint,THREE (tiện probe).
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+0. DEMO LÀ GÌ
+--------------------------------------------------------------------------------
+Game web 3D (three.js) kết hợp 2 game mobile:
+  - Game 1 (Sand Sort): tranh pixel-art ở trên; chạm 1 mảng màu -> khối thạch
+    rơi xuống phễu -> lên băng chuyền OVAL -> rót vào lọ cùng màu -> WIN.
+  - Game 2 (Jelly): chất liệu khối thạch mềm/bóng (jelly cube) thay cho cát.
+
+Dùng ĐÚNG 5 asset FBX của người dùng (lọ, nắp, băng chuyền, jelly cube, khung
+tranh). KHÔNG tự vẽ thay. Texture gốc không có -> dùng màu material thuần.
+
+--------------------------------------------------------------------------------
+1. CÁC FILE QUAN TRỌNG (đường dẫn tuyệt đối)
+--------------------------------------------------------------------------------
+SẢN PHẨM CUỐI (1 file self-contained, mở bằng double-click, ~4.70 MB):
+  C:\Users\Admin\Desktop\LevelEditorGuide\demo game\Jelly_Drop_3D.html
+  (bản sao: C:\Users\Admin\Downloads\Jelly_Drop_3D.html)
+
+SOURCE CHỈNH SỬA ĐƯỢC (thư mục cố định — KHÔNG nằm trong scratchpad tạm):
+  C:\Users\Admin\Desktop\LevelEditorGuide\demo game\jelly3d_src\
+    game.html        <- vỏ UI (topbar, progress bar, hint, loader, win overlay) + CSS
+    game_core.js     <- TOÀN BỘ logic game (đây là file bạn sẽ sửa nhiều nhất)
+    assets_fbx.js    <- window.FBX = {jelly,jar,lid,frame,belt} dạng base64 (~4 MB)
+    lib\             <- three r136 (global build) + FBXLoader + fflate + NURBS*
+      three.min.js, FBXLoader.js, fflate.min.js, NURBSCurve.js, NURBSUtils.js
+    tools\
+      run.sh         <- chạy game headless + chụp ảnh (composite HTML+WebGL) qua CDP
+      drive.js       <- driver CDP (Node, dùng global WebSocket) — run.sh gọi nó
+      build_single.js<- gộp tất cả thành 1 file HTML self-contained
+      test_win.js    <- kịch bản: thả hết board, chờ tới WIN (kiểm tra hội tụ)
+      test_flow.js   <- thả vài cụm theo màu lọ active rồi báo trạng thái
+      test_cap.js    <- ép 1 lọ đầy để thấy ĐẬY NẮP + lọ mới trượt vào
+      test_belt.js   <- thả cụm để thấy cube chạy trên băng chuyền
+      test_tap.js    <- kiểm tra đường raycast tap thật (screen -> instanceId)
+      cap.sh         <- (LEGACY) chụp bằng dump-dom; ưu tiên dùng run.sh
+
+ASSET GỐC (FBX ASCII 7.7.0) vẫn ở:
+  C:\Users\Admin\Desktop\LevelEditorGuide\demo game\
+    Jelly cube.fbx, Lọ.fbx, Nắp lọ.fbx, Khung tranh.fbx, Băng chuyền.fbx
+  Layout_1_Game_1.jpg, Layout_2_Game_1.jpg  (ảnh layout tham chiếu)
+  gameplay_1_game_1.mp4, gameplay_2_game_1.mp4, gameplay_1_game_2.mp4 (video demo)
+
+--------------------------------------------------------------------------------
+2. KIẾN TRÚC KỸ THUẬT (điểm mấu chốt — đọc kỹ)
+--------------------------------------------------------------------------------
+* KHÔNG dùng Python, KHÔNG convert sang GLB. (Máy hiện KHÔNG có Python.)
+  Asset .fbx (ASCII) được nạp TRỰC TIẾP trong trình duyệt bằng three.js FBXLoader.
+* Dùng three.js r136 bản GLOBAL (build/three.min.js) + examples/js loaders
+  (THREE.FBXLoader, fflate, NURBS) — tất cả là biến toàn cục THREE.*, KHÔNG phải
+  ES module. Nhờ vậy đóng gói 1 file chỉ cần nối <script> liền nhau, KHÔNG dính
+  lỗi bare-specifier / importmap. (Đây là lý do chọn r136 global thay vì bản module.)
+* Tranh pixel-art: tạo runtime bằng canvas 2D (hàm generateLevel) -> lưới N×N
+  (mặc định N=20 = 400 ô) snap về palette 7 màu. 1 InstancedMesh duy nhất dùng
+  hình học jelly cube, đổi màu từng instance qua instanceColor. (Nhẹ, ~400 instance
+  — KHÁC bản cũ 63k instance gây lag.)
+* Node v24 có sẵn (global WebSocket) -> drive.js điều khiển Chrome qua DevTools
+  Protocol để chụp ảnh và chạy kịch bản test. Chrome ở:
+  "C:\Program Files\Google\Chrome\Application\chrome.exe".
+
+HỆ TRỤC THẾ GIỚI (Y hướng lên, camera nhìn về -Z, hơi chúc xuống) — SAU BẢN VÁ:
+  - Tranh:        tâm boardCenter (0, 4.8); cell=0.245 -> nửa-rộng 2.45 (vừa ô cửa khung).
+  - Khung (frame):pos [0,4.4,-0.25], width 6.0; bbox y≈ -0.03..8.83 (gồm đuôi phễu).
+                  "Ô cửa" (chỗ hở để đặt tranh) ≈ x±2.49, y 2.9..7.8 -> tâm ~ (0,5.35).
+  - Phễu (logic): từ đáy tranh (picBottomY) thu hẹp xuống "họng" tại funnelY=0.4,
+                  nửa-rộng họng = CFG.funnel.chuteHalf (0.42). Xem funnelHalfAt(y).
+  - Đống chờ:     cube rơi xong CHẤT ĐỐNG quanh y = CFG.feedFloorY (0.32), ngay
+                  trên cửa vào băng chuyền; chỉ tuồn lên belt khi có lọ cùng màu.
+  - Băng chuyền:  ASSET pos [0,-0.9,0.4], size 6.0, depthRatio 0.43, tilt 1.0 (TOP-DOWN).
+                  MÁNG (CH) ĐO TỪ MESH: vành khuyên elip tường-ngoài (Ao,Bo) ~ (±2.55,±0.60),
+                  tường-trong (Ai,Bi) ~ (±1.08,±0.13), cao độ ngồi heightN ~0.42. Cube xếp
+                  trong máng theo (th,rho); rho∈[0,1] = tường chặn. Vào belt ở th=π/2 (sau).
+  - 4 lọ:         Y ≈ -2.8, X = [-3.0, -1.0, 1.0, 3.0].
+  - Camera:       PerspectiveCamera fov 40, pos (0,5.6,20.5), look (0,2.2,0).
+
+CFG (đầu file game_core.js) — chỉnh layout/độ khó ở đây:
+  N, cell, boardCenter, boardZ, frame{pos,width}, funnelY,
+  belt{pos,size,depthRatio,tilt}, jarsY, jarSlotsX, jarWidth, lidWidth,
+  cam{fov,pos,look}, jarCapMin/Max, beltSpeed, maxBeltCubes (322 ~7x), beltGap (legacy),
+  --- MỚI (belt pack, bản vá #3) ---
+  beltPack{collR,soft,iters,win} : bán kính va chạm cube (×cell), độ mềm đẩy, số vòng
+        relaxation, cửa sổ góc broadphase. MÁNG (CH{Ao,Bo,Ai,Bi,heightN,Rmaj}) KHÔNG
+        nằm trong CFG — nó được ĐO từ mesh belt trong measureBeltChannel().
+  --- MỚI (physics rơi) ---
+  phys{g,rest,wallRest,fric,maxV,life}  : trọng lực + đàn hồi va chạm + ma sát +
+        tốc độ tối đa + thời gian tối đa 1 cube còn là "faller" (kẹt thì dồn xuống đống).
+  funnel{chuteHalf}                     : nửa-rộng họng phễu (chỗ hẹp nhất).
+  feedFloorY                            : cao độ "sàn" để cube chất đống & tuồn lên belt.
+
+--------------------------------------------------------------------------------
+3. CƠ CHẾ GAME (mechanic đã chốt — KHÁC game gốc)
+--------------------------------------------------------------------------------
+1) CHẠM (không swipe) vào 1 mảng màu -> floodFill() lấy CỤM ô CÙNG MÀU LIỀN KỀ
+   (4 hướng) tại điểm chạm. Tap thật đi qua raycaster -> instanceId -> (r,c).
+2) Cụm chỉ RƠI nếu canDrop(): tồn tại ÍT NHẤT 1 ô trong cụm mà toàn bộ ô ngay
+   bên dưới (cùng cột) tới đáy đều trống/thuộc cụm. Bị chặn -> NHÁY ĐỎ (flashBlocked).
+3) RƠI = VẬT LÝ (đã đổi, KHÔNG còn lerp thẳng xuống điểm cuối):
+   startFallCluster() biến mỗi ô thành 1 "faller" có (x,y,vx,vy,ang,vang).
+   Mỗi frame: stepFaller() áp TRỌNG LỰC + va chạm với:
+     a) các ô tranh CÒN LẠI (GRID[r][c]>=0) = "mặt đất/terrain" (circle-vs-AABB),
+     b) tường khung/phễu (funnelHalfAt(y), nghiêng dần vào họng),
+     c) "sàn" feedFloorY (cube nằm lại, chất đống).
+   collideFallers(): va chạm CUBE-CUBE (tách mềm) -> xếp thành ĐỐNG, không chồng lên nhau.
+   => cube LĂN xuống qua các vùng màu chưa chọn + khung, dồn về giữa, CHẤT ĐỐNG ở
+      miệng phễu (THẤY ĐƯỢC). Cube kẹt > phys.life giây thì bị dồn thẳng xuống đống.
+4) FEED LÊN BELT: tryFeedBelt() mỗi frame lấy cube THẤP NHẤT trong đống và đưa
+   lên belt — BẤT KỂ đã có lọ cùng màu hay chưa (bản vá #2). Có lọ -> giữ reservation;
+   chưa có -> cube cứ CHẠY trên belt và tự dò lọ mỗi frame. Đống chỉ còn lại khi belt
+   đầy pool (maxBeltCubes=46). beltEntryClear() giữ giãn cách khi vào belt (CFG.beltGap).
+5) BĂNG CHUYỀN = MÁNG PACK (bản vá #3, TOP-DOWN, tilt=1.0): cube xếp DÀY trong vành
+   khuyên elip của belt theo (th=góc, rho=ngang 0..1). Mỗi frame: th+=omega*dt (cuốn cả
+   đám) -> packBeltCubes() va chạm cube-cube (đè/chồng + trải ngang) -> clamp rho∈[0,1]
+   (tường máng) -> beltWorld(th,rho) ra vị trí + wobble/squash/bob. Mỗi cube giữ bc.target;
+   stale -> nhả, tìm lọ khác (findTargetJar). Tới cổng lọ cùng màu (slotGateT, crossed())
+   -> set bc.drop, RỚT THEO CUNG vào miệng lọ (~0.36s) rồi deliverToJar(). Cube CHƯA có
+   lọ -> cứ pack/chạy trong máng (không tràn ra ngoài, không biến mất). => HỘI TỤ tới WIN.
+6) Lọ đầy -> deliverToJar() đặt state 'capping' -> NẮP (lid FBX) hạ xuống + dấu ✓
+   -> 'leaving' (trượt xuống/mờ) -> spawnJarIntoSlot() lọ mới trượt vào từ bên.
+7) CHỌN MÀU LỌ KHI SLOT TRỐNG = pickJarDef(): KHÔNG còn lấy đầu hàng ngẫu nhiên,
+   mà chọn entry trong jarQueue có MÀU ĐANG CHỜ NHIỀU NHẤT (đếm cube không-target
+   trên belt + đống fallers), ưu tiên màu chưa có ở slot khác. => bảo đảm cube
+   trong đống luôn có "nhà" để về -> CHỐNG DEADLOCK + vẫn cảm giác ngẫu nhiên.
+   (buildJarQueue vẫn chia mỗi màu thành nhiều lọ cap ngẫu nhiên 28..70. 4 slot active.)
+8) WIN: board trống + belt trống (beltCubes+fallers+beltQueue2 == 0) + jarQueue rỗng
+   + delivered>=total (checkWin). Nhãn lọ hiển thị SỐ CÒN THIẾU; đầy thì hiện ✓.
+   (beltQueue2 nay gần như luôn rỗng — cube tuồn thẳng từ đống lên belt.)
+
+API debug expose ra window.__game (rất tiện để test/automation):
+  CFG, jars, beltCubes, fallers, state, delivered, total,
+  floodFill(r,c), canDrop(cells), dropAt(r,c), tapCell(r,c) (qua raycast thật),
+  GRID(), snapshot() (toDataURL canvas),
+  --- MỚI ---  scene, camera, frame (group), belt (group), beltPoint(t,lat), THREE.
+  (dùng để probe bbox/đo layout — vd canh tranh vào khung bằng overlay tô khung.)
+
+--------------------------------------------------------------------------------
+4. QUY TRÌNH BUILD & TEST (chạy trong Git Bash; KHÔNG cần server)
+--------------------------------------------------------------------------------
+Thư mục gốc lệnh:
+  cd "C:/Users/Admin/Desktop/LevelEditorGuide/demo game/jelly3d_src"
+
+!!! BẪY ĐƯỜNG DẪN (Git Bash trên Windows): run.sh tạo URL "file:///$HTML".
+    Nếu HTML là dạng "/c/Users/..." ($(pwd) của Git Bash) thì Chrome BÁO
+    ERR_FILE_NOT_FOUND. PHẢI truyền đường dẫn kiểu Windows "C:/Users/...".
+    Ví dụ chạy đúng:
+      B="C:/Users/Admin/Desktop/LevelEditorGuide/demo game/jelly3d_src"
+      bash tools/run.sh "$B/game.html" "$B/tools/out.png" 2600 "" 200 460 940
+    (preWait ~2600ms để game nạp xong FBX; "ready=true" in ra là OK.)
+
+A) CHỤP ẢNH TRẠNG THÁI ĐẦU (kiểm tra layout):
+  bash tools/run.sh "$(pwd)/game.html" "$(pwd)/tools/out.png" 1500 "" 200
+  -> mở out.png xem.  (xem BẪY ĐƯỜNG DẪN ở trên nếu báo file-not-found)
+
+B) CHẠY 1 KỊCH BẢN TEST rồi chụp (vd test tới WIN):
+  bash tools/run.sh "$(pwd)/game.html" "$(pwd)/tools/win.png" 800 "$(pwd)/tools/test_win.js" 300
+  -> dòng "CODE_RESULT: {...}" in ra trạng thái cuối (won, delivered/total, jars...).
+  (test_win.js tạm tăng beltSpeed cho nhanh; có timeout ~75s.)
+
+C) ĐÓNG GÓI THÀNH 1 FILE HTML SELF-CONTAINED:
+  node tools/build_single.js "$(pwd)" "C:/Users/Admin/Desktop/LevelEditorGuide/demo game/Jelly_Drop_3D.html"
+  -> nó nội tuyến mọi <script src> (lib + assets + game_core) vào game.html.
+  Nhớ copy ra Downloads nếu muốn:
+  cp ".../demo game/Jelly_Drop_3D.html" "C:/Users/Admin/Downloads/Jelly_Drop_3D.html"
+
+LƯU Ý TEST HEADLESS:
+  - run.sh đã set cờ swiftshader: --use-gl=swiftshader --ignore-gpu-blocklist
+    --enable-unsafe-swiftshader (bắt buộc để WebGL chạy không GPU).
+  - Software GL CHẬM. Hiện chỉ ~400 instance + ít mesh nên OK; nếu tăng N nhiều
+    hoặc bật hiệu ứng nặng, cân nhắc tạm tắt shadow khi chụp:
+    đặt window.__NOSHADOW=true trước start() (renderer.shadowMap theo cờ này).
+  - Trên GPU thật của người dùng thì để shadow BẬT (mặc định) là đẹp.
+
+--------------------------------------------------------------------------------
+5. THÔNG SỐ ASSET (sau khi FBXLoader nạp + chuẩn hoá)
+--------------------------------------------------------------------------------
+Kích thước FBX gốc (đơn vị FBX) và hướng đã xác định bằng thực nghiệm:
+  jelly : 51^3, 108 tris            -> cube bevel; dùng làm hình học instanced.
+  jar   : 521 x 204 x 321, 1076 tris-> BÁT NÔNG, miệng +Y. (rộng>cao!) =>
+          chuẩn hoá theo CHIỀU RỘNG (byWidth=jarWidth) để vừa slot, không chồng.
+  lid   : 542 x 72 x 342, 644 tris  -> nắp dẹt, đậy từ trên.
+  frame : 2595 x 3829 x 47, 1134 tris-> tấm phẳng đứng (mặt XY, mỏng theo Z),
+          gồm cả đuôi PHỄU phía dưới -> nên cao hơn rộng. Viền mảnh (trông như
+          khung mảnh, không dày như mockup — đó là hình học gốc).
+  belt  : 109 x 34 x 8.5, 5122 tris -> oval nằm trong mặt XY (mỏng theo Z).
+          Đặt nằm: rotation.x = -PI/2; rồi NGHIÊNG về camera thêm CFG.belt.tilt.
+Hàm normalize(obj,{maxDim|byWidth|byHeight}) tự canh giữa + scale theo trục chọn.
+
+--------------------------------------------------------------------------------
+6. GIỚI HẠN ĐÃ BIẾT (nói thẳng, đừng hứa quá)
+--------------------------------------------------------------------------------
+- Physics rơi nay là MÔ PHỎNG 2D TỰ VIẾT trong mặt phẳng tranh (XY): trọng lực +
+  va chạm circle-vs-AABB với ô tranh + va chạm cube-cube (O(n^2), 2 vòng nới).
+  KHÔNG phải engine vật lý thật; "cảm giác" jelly chứ không chính xác như game gốc.
+- collideFallers O(n^2): nếu thả 1 lúc HÀNG TRĂM cube (vd test_win drain cả board)
+  thì đống rất to & nặng. Chơi tay (thả từng cụm) thì nhẹ. fallerPool = 200 (vượt
+  thì tạo mesh mới). Nếu cần, thêm spatial-hash hoặc giảm SUB/iteration.
+- (CẬP NHẬT bản vá #2) Cube giờ LUÔN tuồn lên belt và CHẠY VÒNG dù chưa có lọ cùng
+  màu (không còn nằm chờ trong đống). Đống ở phễu chỉ còn khi belt đã đầy pool
+  (maxBeltCubes=46) — vd test_win/test_ride drain cả board cùng lúc -> đống to. Chơi
+  tay (thả từng cụm) thì cube rải đều quanh máng, đẹp.
+- (ĐÃ XONG bản vá #3) Cube nay PACK nhiều hàng + đè nhau trong máng (tới 322 cube),
+  bị tường máng (rho∈[0,1]) chặn không tràn ra ngoài, giống lớp jelly trong video.
+  Còn có thể tinh chỉnh độ dày (CFG.beltPack.collR), tốc độ cuốn (beltSpeed), tường
+  trong/ngoài (hệ số Ai/Bi trong measureBeltChannel) cho khít từng asset belt khác.
+- Asset không có texture gốc -> chỉ màu material thuần.
+- Khung tranh viền mảnh (hình học gốc), không dày như ảnh mockup.
+- Tranh demo là cảnh trừu tượng (trời/mặt trời/táo/cỏ) sinh tự động trong
+  generateLevel() để có vùng màu liền lớn cho cơ chế flood-fill. Đổi tranh khác
+  thì sửa hàm này (hoặc nạp 1 lưới màu có sẵn).
+
+--------------------------------------------------------------------------------
+7. VIỆC CÓ THỂ LÀM TIẾP (gợi ý)
+--------------------------------------------------------------------------------
+- Băng chuyền: cube đã PACK nhiều hàng + đè nhau trong máng (bản vá #3). Có thể thêm
+  XẾP TẦNG (z) cho dày hơn nữa, hoặc spatial-hash cho packBeltCubes nếu cần >322 cube.
+- Tinh chỉnh "cảm giác" rơi qua CFG.phys (g, rest, fric, maxV) và CFG.funnel.chuteHalf
+  / feedFloorY. Muốn cube rơi chậm/nảy hơn thì giảm g, tăng rest.
+- Giới hạn chiều cao đống chờ: nếu thả dồn quá nhiều màu chưa có lọ, đống có thể
+  tràn lên vùng tranh. Có thể cap số faller "chờ" hoặc cho thêm slot lọ.
+- Khung tranh dày hơn / tô màu nổi bật hơn; canh tranh chính xác hơn nữa bằng
+  overlay tô khung (xem __game.frame + probe bbox).
+- Nhiều level: tách tham số level (tranh + palette + cap lọ) ra cấu hình.
+- Hiệu ứng rót (particle nhỏ), âm thanh, juice khi đậy nắp.
+- Tối ưu collideFallers (spatial hash) nếu cần thả nhiều cube cùng lúc mượt hơn.
+- ĐÃ XONG: belt top-down (tilt 1.0), tranh vừa khung (cell 0.245, boardCenter.y 4.8),
+  physics rơi + chống "biến mất", progress bar lên đỉnh; (bản vá #2) cube luôn lên belt
+  + rớt vào lọ có hoạt ảnh + chạy trong máng; (bản vá #3) belt PACK ~7x cube, đè nhau,
+  bị tường máng chặn, đo máng từ mesh thật.
+
+================================================================================
+ HẾT. Mọi logic nằm trong jelly3d_src\game_core.js. Sửa -> build_single.js -> xong.
+================================================================================
