@@ -425,14 +425,35 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
        nên góc chìa ra xa hơn nửa-cạnh cell*0.46). Nhờ vậy THÂN cube xoay nằm GỌN trong
        road, KHÔNG đè/chàn lên viền rim. Tường TRONG dùng cubeR=cell*0.46 (road đủ rộng).
        (Lỗi cũ: trừ cubeR=0.46 cả 2 phía -> góc cube xoay vẫn leo lên rim.)
-       Có guard: nếu road quá hẹp (CH.Ao<=CH.Ai) thì gộp về 1 làn giữa. ***
-    4) beltWorld(th, rho, lift): nội suy giữa tường trong (rho=0) và ngoài (rho=1)
-       theo góc th, đặt cao độ heightN + lift, rồi đưa từ hệ local belt ra world.
-    5) planarToThRho(): hàm nghịch để map vị trí phẳng -> (th, rho) khi cube vào belt.
-    6) slotGateT(jarX): góc cổng của lọ = vị trí trên cung TRƯỚC khớp với X của lọ,
-       dùng Rmaj (vd th = 2π − acos(x / Rmaj)). LƯU Ý lọ NGOÀI (x=±3) > Rmaj nên bị
-       clamp -> cổng nằm đúng 2 đầu elip (cap) — chỗ tiếp tuyến ngắn (liên quan fix
-       bug rớt sớm ở 4.6).
+       Có guard: nếu road quá hẹp (CH.Ao<=CH.Ai) thì gộp về 1 làn giữa.
+       *** FIX "cube tràn lên rim/outline + KHÔNG phủ kín mặt băng" (2026-06-27): rim FBX & mặt
+       băng vẽ là hình RACETRACK (bo chữ nhật: 2 cạnh dài THẲNG, 2 đầu bo) — đo thật aMax≈2.69,
+       bMax≈0.94 (tỉ lệ ~3.9:1). NHƯNG kênh cube cũ tham số hoá máng là ELLIP thuần
+       (beltWorld = CH.Ao·cosθ, CH.Bo·sinθ). Ellip nội tiếp racetrack chỉ CHẠM rim ở 4 điểm,
+       còn lại THỤT VÀO: ở giữa đoạn thẳng tường-ngoài cube tụt từ b=0.635 xuống b=0.16 (hở
+       một dải road sát rim, rộng dần về 2 đầu = "không phủ kín"), ở 2 đầu cap thì ellip phình
+       ra -> cube leo qua rim ("tràn rim"). CÁCH TRỊ: mô hình kênh cube thành STADIUM khớp
+       ĐÚNG mặt vẽ: 1 ĐƯỜNG TÂM stadium (cap radius Rc, nửa-thẳng Lc, chu vi per) + OFFSET
+       NGANG (2·rho−1)·Whalf dọc PHÁP TUYẾN đường tâm. Vì Lo=Ao−Bo và Li=Ai−Bi BẰNG nhau
+       (=aMax−bMax) nên 1 đường tâm tái tạo CHÍNH XÁC cả 4 mốc CH (ngoài=Rc+Whalf=Bo,
+       trong=Rc−Whalf=Bi, 2 đầu=Lc+Rc±Whalf=Ao/Ai). th∈[0,2π) map TUYẾN TÍNH sang cung-độ
+       s=th/2π·per. Hàm mới: stadiumAt(s) -> {a,b, tiếp tuyến đơn vị, pháp tuyến ngoài, độ
+       cong kap}; beltWorld/planarToThRho/setAB/slotGateT/updateBeltSpin/enterBeltUnit đều
+       dùng nó (KHÔNG còn cos/sin ellip). Nhờ vậy cube ÔM song song rim quanh CẢ vòng (kể cả
+       cap), phủ kín road, KHÔNG leo rim. KÈM fix bất đối xứng: tường TRONG cũ CH.Ai=iA+cubeR
+       BỎ SÓT số hạng `wall` (nửa bề dày outline) mà tường ngoài có trừ -> cube đè lên outline
+       TRONG; nay CH.Ai=iA+wall+cubeR (đối xứng) nên thân cube chạm đúng mép road, không leo
+       outline trong. (Hệ quả: road rộng ~1 làn cube; muốn dày/nhiều hàng hơn thì TĂNG
+       BELT_ROAD — nó nới CẢ mặt vẽ lẫn kênh cùng lúc.) Kiểm: probe beltWorld(th,1) cho b=Bo
+       cố định suốt đoạn thẳng; ảnh thật cube không leo rim/outline. ***
+    4) beltWorld(th, rho, lift): điểm trên ĐƯỜNG TÂM stadium tại s=th/2π·per + offset ngang
+       (2·rho−1)·Whalf dọc pháp tuyến (rho=0 tường trong, rho=1 tường ngoài), cao độ
+       heightN + lift, rồi đưa từ hệ local belt ra world.
+    5) planarToThRho(): hàm nghịch để map vị trí phẳng -> (th, rho); chiếu cú đẩy lên tiếp
+       tuyến (chia tốc độ đường-song-song 1+off·kap để cube lệch tâm trên cap đúng nhịp) & pháp tuyến.
+    6) slotGateT(jarX): cổng lọ = cung-độ trên CONTOUR ĐÁY (front, b<0) có a==X (đoạn thẳng
+       đáy, hoặc cap dưới nếu |X|>Lc -> lọ NGOÀI x=±3 clamp về 2 đầu loop). Trả về s/per (loop
+       fraction). (Cũ: th=2π−acos(x/Rmaj) theo ellip.)
   -> Đổi asset belt khác kích thước thì các hàm này TỰ canh lại, không cần sửa số.
 
 --------------------------------------------------------------------------------
