@@ -208,9 +208,12 @@ function buildBelt(beltObj){
   const ratio = n.size.y / n.size.x;
   n.group.scale.z *= (CFG.belt.depthRatio/ratio);
   beltGroup = n.group;
-  beltGroup.traverse(m=>{if(m.isMesh){m.material=new THREE.MeshStandardMaterial({color:0x8aa0c8,roughness:0.6,metalness:0.05}); m.castShadow=false; m.receiveShadow=true;}});
+  // white OUTLINE frame (ported from conveyor-export): the FBX is just the pill rim; the moving
+  // belt face is drawn separately in buildBeltSurface().
+  beltGroup.traverse(m=>{if(m.isMesh){m.material=new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x3a4452,roughness:0.35,metalness:0.0}); m.castShadow=false; m.receiveShadow=true;}});
   scene.add(beltGroup);
   measureBeltChannel();
+  buildBeltSurface();
 }
 
 // ------ belt TROUGH channel: an elliptical annulus measured from the real belt mesh ------
@@ -218,7 +221,14 @@ function buildBelt(beltObj){
 // INNER wall, rho=1 the OUTER wall; clamping rho is what keeps cubes from spilling off the belt.
 let beltCtr=new THREE.Vector3(0,-0.9,0.4);
 let beltAxA=new THREE.Vector3(1,0,0), beltAxB=new THREE.Vector3(0,1,0), beltAxN=new THREE.Vector3(0,0,1);
+let beltTopA=2.7, beltTopB=0.8, beltTopZ=0.3;     // raw top-face half-extents + height (belt local axes) for the belt surface
+let beltSurfaceUpdate=()=>{};                       // called each frame -> animates the running arrows on the belt face
 const CH={Ao:2.55,Bo:0.60,Ai:1.08,Bi:0.14,heightN:0.42,Rmaj:1.8};  // outer/inner wall half-axes, ride height, centerline major-radius
+// Belt-surface ROAD geometry as fractions of the canvas height PH (single source of truth shared
+// by the drawn belt face in buildBeltSurface AND the cube trough in measureBeltChannel). bw =
+// white outline thickness; road = the annular band ("máng") the cubes ride in, between the
+// inner & outer white outlines. The OUTER outline is the rim = the physical wall.
+const BELT_BW=0.085, BELT_ROAD=0.30;
 function measureBeltChannel(){
   beltGroup.updateMatrixWorld(true);
   const box=new THREE.Box3().setFromObject(beltGroup);
@@ -235,10 +245,83 @@ function measureBeltChannel(){
   const zThr=zMax-0.18; let aMax=0,bMax=0;       // top-face extent = the oval the belt presents upward
   for(const s of S){ if(s[2]<zThr) continue; if(Math.abs(s[0])>aMax)aMax=Math.abs(s[0]); if(Math.abs(s[1])>bMax)bMax=Math.abs(s[1]); }
   const cubeR=CFG.cell*0.46;
-  CH.Ao=aMax*0.93 - cubeR; CH.Bo=bMax*0.86 - cubeR*0.5;   // outer wall sits a cube-radius inside the rim
-  CH.Ai=CH.Ao*0.42;        CH.Bi=CH.Bo*0.22;              // inner wall -> leaves an annular band (the trough)
+  // Fit the cube trough to the belt-surface ROAD band (the annulus between the two white outlines
+  // drawn by buildBeltSurface). The OUTER outline ~ the rim = OUTER wall; the INNER outline = INNER
+  // wall. The rim is thus a REAL physical wall: cubes ride ON the belt face and cannot spill past
+  // it -- they leave the channel only at a matching jar's gate. Outline half-extents (world units),
+  // derived from the same stadium maths (inset bw*0.5 for the outer, bw+road for the inner):
+  const oA=aMax-BELT_BW*bMax,                 oB=(1-BELT_BW)*bMax;                  // outer outline (rim)
+  const iA=aMax-(2*BELT_BW+2*BELT_ROAD)*bMax, iB=(1-2*BELT_BW-2*BELT_ROAD)*bMax;    // inner outline
+  CH.Ao=oA-cubeR; CH.Bo=oB-cubeR;                          // cube CENTRE stays a radius inside the rim
+  CH.Ai=iA+cubeR; CH.Bi=iB+cubeR;                          // ...and a radius inside the inner wall
   CH.heightN=zMax + cubeR*0.85;                            // cube centre rides just above the top face
   CH.Rmaj=(CH.Ai+CH.Ao)/2;
+  beltTopA=aMax; beltTopB=bMax; beltTopZ=zMax;            // raw top-face oval for the belt surface plane
+}
+
+// ------ belt SURFACE: the moving belt face (ported from conveyor-export/js/conveyor.js) ------
+// A flat plane laid on the belt's top oval, textured with a CanvasTexture redrawn each frame:
+// blue-grey stadium + 2 white outlines + white arrows running around the loop. The FBX provides
+// only the white pill rim; this is the animated belt the cubes ride on.
+function buildBeltSurface(){
+  const fullW=2*beltTopA, fullH=2*beltTopB;             // world dims of the oval top face
+  const PH=256;                                          // canvas height (px)
+  const PW=Math.max(PH+16, Math.round(PH*fullW/Math.max(0.01,fullH)));
+  const cv=document.createElement('canvas'); cv.width=PW; cv.height=PH;
+  const bx=cv.getContext('2d');
+  const Ls=PW-PH;                                        // straight-section length (stadium)
+  const bw=PH*BELT_BW;                                   // white outline thickness (shared with the cube trough)
+  const roadW=PH*BELT_ROAD;                              // road width = the annulus the cubes ride in
+  // point on the stadium centerline at inset d, arc-length s -> {x,y,ang(=running direction)}
+  function stadiumPoint(d, s){
+    const r=(PH-2*d)/2, cx=PW/2, cy=PH/2;
+    const per=2*Ls+2*Math.PI*r; s=((s%per)+per)%per;
+    if(s<Ls) return {x:cx-Ls/2+s, y:cy-r, ang:0};
+    s-=Ls;
+    if(s<Math.PI*r){ const a=-Math.PI/2+s/r; return {x:cx+Ls/2+r*Math.cos(a), y:cy+r*Math.sin(a), ang:a+Math.PI/2}; }
+    s-=Math.PI*r;
+    if(s<Ls) return {x:cx+Ls/2-s, y:cy+r, ang:Math.PI};
+    s-=Ls; const a=Math.PI/2+s/r; return {x:cx-Ls/2+r*Math.cos(a), y:cy+r*Math.sin(a), ang:a+Math.PI/2};
+  }
+  function stadiumPath(d){
+    const r=(PH-2*d)/2, cx=PW/2, cy=PH/2;
+    bx.beginPath(); bx.moveTo(cx-Ls/2,cy-r); bx.lineTo(cx+Ls/2,cy-r);
+    bx.arc(cx+Ls/2,cy,r,-Math.PI/2,Math.PI/2); bx.lineTo(cx-Ls/2,cy+r);
+    bx.arc(cx-Ls/2,cy,r,Math.PI/2,Math.PI*1.5); bx.closePath();
+  }
+  const dMid=bw+roadW/2;                                 // inset of the road centerline
+  const perMid=2*Ls+2*Math.PI*((PH-2*dMid)/2);
+  const arrowGap=PH*0.42;                                // spacing between arrows (bigger -> sparser)
+  const nArrows=Math.max(8, Math.round(perMid/arrowGap));
+  const aSize=roadW*0.42;                                // half arrow height
+  let phase=0;
+  const tex=new THREE.CanvasTexture(cv);
+  tex.anisotropy=renderer.capabilities.getMaxAnisotropy();
+  function drawBelt(){
+    bx.clearRect(0,0,PW,PH);
+    stadiumPath(bw*0.5); bx.save(); bx.clip();           // clip to the pill -> transparent outside
+    bx.fillStyle='#647689'; bx.fillRect(0,0,PW,PH);      // blue-grey belt background
+    bx.strokeStyle='rgba(255,255,255,0.28)'; bx.lineWidth=roadW*0.16; bx.lineCap='round'; bx.lineJoin='round';
+    for(let i=0;i<nArrows;i++){                          // white arrows running along the centerline
+      const p=stadiumPoint(dMid, phase+i*(perMid/nArrows));
+      bx.save(); bx.translate(p.x,p.y); bx.rotate(p.ang+Math.PI);
+      bx.beginPath(); bx.moveTo(-aSize*0.45,-aSize); bx.lineTo(aSize*0.45,0); bx.lineTo(-aSize*0.45,aSize); bx.stroke();
+      bx.restore();
+    }
+    bx.restore();
+    bx.strokeStyle='#ffffff'; bx.lineWidth=bw; bx.lineJoin='round';   // 2 white outlines (road between them)
+    stadiumPath(bw*0.5); bx.stroke();
+    stadiumPath(bw+roadW); bx.stroke();
+    tex.needsUpdate=true;
+  }
+  const mat=new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide, depthWrite:false});
+  const surf=new THREE.Mesh(new THREE.PlaneGeometry(fullW, fullH), mat);
+  // orient the plane into the belt's local frame: local X->axA, Y->axB, plane-normal->axN
+  surf.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(beltAxA, beltAxB, beltAxN));
+  surf.position.copy(beltCtr).addScaledVector(beltAxN, beltTopZ+0.012);   // just above the rim, below the cubes
+  scene.add(surf);
+  drawBelt();
+  beltSurfaceUpdate=()=>{ phase-=perMid*0.0016; drawBelt(); };  // run the loop (negative = same dir as conveyor-export)
 }
 function chRadii(rho){ return [CH.Ai+(CH.Ao-CH.Ai)*rho, CH.Bi+(CH.Bo-CH.Bi)*rho]; }
 // (th,rho) -> world position on the belt surface (+lift along the surface normal)
@@ -856,6 +939,7 @@ function animate(){
   requestAnimationFrame(animate);
   const dt=Math.min(clock.getDelta(),0.05);
   if(state.started) update(dt);
+  beltSurfaceUpdate();           // animate the running arrows on the belt face every frame
   renderer.render(scene,camera);
 }
 
