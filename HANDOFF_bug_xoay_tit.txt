@@ -1,0 +1,200 @@
+================================================================================
+ HAND-OFF: BUG "JELLY Ở ĐÁY KHUNG TRANH XOAY TÍT" (chưa xác nhận đã fix xong)
+ Ngày tạo: 2026-06-27
+ Game: Jelly Drop 3D (three.js, 1 file HTML self-contained)
+================================================================================
+
+--------------------------------------------------------------------------------
+0. TÓM TẮT BUG (theo lời người dùng)
+--------------------------------------------------------------------------------
+Các khối jelly (cube) ở ĐÁY KHUNG TRANH (vùng phễu / đống chờ ngay trên băng
+chuyền) bị XOAY LIÊN TỤC ("xoay tít") và ĐẨY các cube khác LÊN mạnh. Mong muốn:
+chúng NGỪNG XOAY, nằm yên khi đã lắng. Người dùng MUỐN GIỮ NGUYÊN MẬT ĐỘ cube
+(không giảm số lượng). Sau nhiều lần sửa, người dùng vẫn báo "vẫn bị xoay tít".
+
+TRẠNG THÁI: Mình đã sửa nhiều vòng nhưng CHƯA tự chạy game để xác nhận bằng mắt.
+Cần người/agent kế tiếp CHẠY THẬT (mở HTML trong trình duyệt) để kiểm chứng.
+
+--------------------------------------------------------------------------------
+1. *** PHÁT HIỆN QUAN TRỌNG NHẤT — ĐỌC TRƯỚC TIÊN: FILE NÀO ĐANG CHẠY ***
+--------------------------------------------------------------------------------
+Thư mục: C:\Users\Admin\Desktop\LevelEditorGuide\demo game\
+
+CÓ NHIỀU FILE LOGIC, ĐÃ PHÂN KỲ (diverged) — DỄ SỬA NHẦM FILE:
+
+  (A) Jelly_Drop_3D.html      <-- FILE ĐANG CHẠY / FILE CHUẨN. ~5550 dòng, ~5MB
+                                  (đã inline three.js + assets FBX base64 + logic).
+                                  LÀ FILE DUY NHẤT chứa demo con MÈO (CAT_BITMAP),
+                                  palette teal/maroon->nay xám/đen, maxBeltCubes.
+                                  Người dùng double-click file này để chơi.
+                                  => MỌI SỬA LOGIC PHẢI VÀO ĐÂY.
+
+  (B) jelly3d_src/game_core.js <-- BẢN CŨ / LẠC HẬU. ~810 dòng. KHÔNG có con mèo,
+                                  palette khác (0xf5c531/0x5fb84f...), maxBeltCubes:322,
+                                  updateBeltSpin còn base=omega*1.3 (code spin CŨ).
+                                  game.html (jelly3d_src/game.html) nạp file này qua
+                                  <script src>. ĐỪNG TIN file này là source thật.
+
+  (C) jelly3d_src/tools/build_single.js  <-- script build: inline các <script src>
+                                  của game.html (lib + assets_fbx.js + game_core.js)
+                                  thành 1 HTML.
+   *** CẢNH BÁO: ĐỪNG CHẠY build_single.js để "build lại" Jelly_Drop_3D.html. ***
+   Vì game_core.js đã lạc hậu (không có con mèo), build lại sẽ GHI ĐÈ và XOÁ SẠCH
+   con mèo + mọi fix trong (A). (A) và (B) đã phân kỳ; (A) mới là bản phát triển thật.
+
+  (D) conveyor-export/index.html  <-- nhỏ (775B), cũ, bỏ qua.
+
+BẰNG CHỨNG người dùng ĐANG chạy (A) và CÓ nạp code mới (không phải cache):
+  ở 1 lượt trước họ THẤY màu nền trắng (mình vừa đổi teal->trắng) nên mới yêu cầu
+  đổi tiếp sang xám => họ reload được code mới. Vậy "vẫn xoay tít" KHÔNG do cache.
+
+--------------------------------------------------------------------------------
+2. HỆ TRỤC & VỊ TRÍ (để hiểu "đáy khung tranh" là chỗ nào)
+--------------------------------------------------------------------------------
+Bố cục dọc màn hình (Y hướng lên): TRANH (trên) -> PHỄU -> BĂNG CHUYỀN -> 4 LỌ (dưới).
+  - picBottomY()  ≈ 2.35  (đáy bức tranh = boardCenter.y 4.8 - nửa rộng bàn 2.45)
+  - Phễu: từ picBottomY (2.35) thu hẹp xuống họng CFG.funnelY = 0.4
+  - feedFloorY = 0.32 : "sàn" nơi cube chất ĐỐNG chờ tuồn lên belt
+  - Băng chuyền: y ≈ -0.9 (máng oval, gần top-down)
+  - Lọ: y ≈ -2.8
+"ĐÁY KHUNG TRANH" mà người dùng nói = vùng PHỄU + ĐỐNG CHỜ (y khoảng 0.32..2.35),
+ngay trên cửa vào băng chuyền.
+
+--------------------------------------------------------------------------------
+3. CÓ 3 NGUỒN XOAY (rotation) TRONG CODE GAME (file A) — GHI NHỚ
+--------------------------------------------------------------------------------
+Tìm trong Jelly_Drop_3D.html (số dòng có thể xê dịch vài dòng sau mỗi lần sửa):
+
+  (i)   FALLER (cube đang RƠI / trong phễu / trong đống chờ):
+        - state: fallers[] = {x,y,vx,vy,ang,vang,r,color,life,load,...}
+        - stepFaller(f,dt)            ~dòng 5099  (vật lý rơi + va chạm + set vang)
+        - collideFallers()            ~dòng 5180  (va chạm cube-cube, vang*=0.55)
+        - render: f.mesh.rotation.set(0,0,f.ang)  ~dòng 5286  (f.ang += vang*h)
+        - CAP: phys.maxSpin = 1.6 rad/s (CFG, ~dòng 4499)
+        => ĐÂY NHIỀU KHẢ NĂNG LÀ THỦ PHẠM "xoay tít ở đáy khung" (cube trong phễu).
+
+  (ii)  BELT CUBE (cube đang chạy vòng trong máng oval):
+        - state: beltCubes[] = {th,rho,wob,drop,...}
+        - updateBeltSpin(bc,dt,omega) ~dòng 5044
+        - render loop belt           ~dòng 5343+ (gọi updateBeltSpin)
+        => ĐÃ GỠ SẠCH SPIN (xem mục 4). Ít khả năng là thủ phạm hiện tại.
+
+  (iii) DROP ANIMATION (cube đang RỚT từ belt vào lọ):
+        - bc.mesh.rotation.y += dt*7  ~dòng 5352  (7 rad/s = XOAY NHANH THẬT!)
+        - chỉ kéo dài ~0.36s mỗi cube, ở vị trí GIỮA belt VÀ LỌ (dưới belt).
+        => NGHI VẤN CHƯA LOẠI TRỪ: nếu có nhiều cube rớt liên tục (2 màu, 1208 cube)
+           thì luôn có cube đang xoay nhanh khi bay vào lọ. NHƯNG vị trí là ở LỌ
+           (rất dưới), không hẳn "đáy khung tranh". Agent kế tiếp NÊN xác minh.
+
+--------------------------------------------------------------------------------
+4. ĐÃ THỬ NHỮNG GÌ TRONG SESSION NÀY (và vì sao chưa chắc xong)
+--------------------------------------------------------------------------------
+Tất cả sửa đều trong Jelly_Drop_3D.html (file A). Doc cập nhật song song trong
+Jelly_Drop_3D_MECHANIC_SPEC.txt mục 4.4 và 4.6.
+
+  VÒNG 1 (FALLER): mô hình "lăn khi trượt nhanh, phanh khi lắng". Thêm cờ
+    settling, ban đầu chỉ phủ f.y < feedFloorY + f.r*4 (~y<0.77). -> Người dùng:
+    "vẫn xoay tít, không khác gì". (Vùng quá nhỏ, đống cao hơn 0.77.)
+
+  VÒNG 2 (FALLER): nới settling = ld>=1 || f.y < funnelY+1.0 (~y<1.4) + thêm
+    DAMPING tuyến tính trong đống (f.vx*=0.6; f.vy>0 -> *0.45; vang*=0.45) + bỏ
+    cú đẩy ngang ±0.25 của tường khi settling. -> Vẫn "xoay tít".
+    (Vùng vẫn chưa phủ phễu phía trên 1.4; cube lăn trong phễu vẫn bị cap ~1.6.)
+
+  VÒNG 3 (BELT): tưởng thủ phạm là belt cube ở cửa vào (th=π/2, nằm dưới miệng
+    phễu). Thử "lăn theo dịch chuyển thật" (flow = dth/(omega*dt)). THẤT BẠI VỀ
+    LÝ THUYẾT: băng cuốn CẢ ĐÁM nên mọi cube đều có th += omega*dt -> flow≈1 ->
+    vẫn lăn. Sau đó (vòng 3b) GỠ HẲN tumble của belt: updateBeltSpin chỉ còn
+    rotation.set(sin(wob)*0.05, th, cos(wob)*0.05) (yaw chậm bám hướng đi + lắc
+    nhỏ, KHÔNG tích lũy). Belt cube giờ KHÔNG thể xoay tít. -> Người dùng vẫn báo
+    "vẫn bị xoay tít" => CHỨNG TỎ THỦ PHẠM KHÔNG PHẢI BELT CUBE.
+
+  VÒNG 4 (FALLER, hiện tại): kết luận thủ phạm là FALLER trong PHỄU phía trên 1.4.
+    - Mở settling = ld>=1 || f.y < picBottomY()  (MỌI cube dưới đáy tranh).
+      (stepFaller ~dòng 5121)
+    - CHỐT CỨNG ở vòng render (~dòng 5283):
+        if(f.y < picBottomY()){ f.vang*=0.5; if(Math.abs(f.vang)<0.2) f.vang=0; }
+        else if((f.resting||f.contactCube)&&speed<0.5){ f.vang*=0.4; ... }
+      => ép spin về 0 MỖI FRAME cho mọi cube dưới đáy tranh, BẤT KỂ vận tốc.
+    -> CHƯA CÓ PHẢN HỒI CỦA NGƯỜI DÙNG SAU VÒNG 4. Cần kiểm chứng.
+
+--------------------------------------------------------------------------------
+5. GIẢ THUYẾT CÒN LẠI / HƯỚNG ĐIỀU TRA TIẾP (cho session sau)
+--------------------------------------------------------------------------------
+A) XÁC MINH BẰNG MẮT TRƯỚC TIÊN. Đừng sửa mù. Cách rẻ nhất:
+   - Mở Jelly_Drop_3D.html, chơi tới khi có đống ở đáy khung, quan sát CHÍNH XÁC
+     cube nào xoay: (a) cube trong PHỄU, (b) đống sát belt, (c) cube đang BAY VÀO
+     LỌ (drop), hay (d) cube CHẠY VÒNG trên belt.
+   - Hoặc thêm tạm 1 overlay debug: in ra rotation/vang của cube thấp nhất; hoặc
+     tô MÀU RIÊNG cho cube theo nguồn (faller=đỏ, belt=xanh, drop=vàng) để biết
+     ngay loại nào đang xoay. (Nhớ gỡ debug sau.)
+
+B) NẾU là FALLER mà vòng 4 vẫn chưa hết: kiểm tra f.ang có thực sự ngừng tăng
+   không. Lưu ý f.mesh.rotation.set(0,0,f.ang) — f.ang là GÓC TÍCH LUỸ; phải để
+   vang=0 thì ang mới đứng. Vòng 4 đã ép vang->0 ở render cho y<picBottomY. Nếu
+   vẫn xoay, có thể 1 path khác trong stepFaller vẫn set vang khác 0 SAU khi
+   render (thứ tự: update() gọi stepFaller (substep) RỒI tới render-loop trong
+   cùng update; vang bị ép 0 ở cuối; frame sau stepFaller chạy lại). Cân nhắc ép
+   thẳng f.vang=0 NGAY ĐẦU stepFaller nếu f.y<picBottomY và f.resting.
+
+C) NẾU là DROP ANIMATION (nguồn iii): giảm/bỏ "bc.mesh.rotation.y += dt*7"
+   (~dòng 5352) hoặc giảm hệ số 7. Đây là nghi vấn lớn nhất CHƯA loại trừ vì nó
+   là chỗ DUY NHẤT xoay NHANH thật (7 rad/s). Nếu người dùng nhìn vùng dưới belt.
+
+D) NẾU là "đẩy nhau lên mạnh" (fountain) do MẬT ĐỘ: người dùng muốn GIỮ mật độ
+   trên BELT (maxBeltCubes=1208), nhưng cái nhồi ở PHỄU là FALLER (đống chờ), KHÁC
+   với belt. Có thể nới HỌNG phễu cho cube xuống belt nhanh hơn (CFG.funnel.chuteHalf
+   0.42 -> lớn hơn) để đống không dồn; HOẶC tăng tốc tuồn (tryFeedBelt ~dòng 4998,
+   hiện mỗi frame chỉ đưa 1 cube). LƯU Ý: cửa vào belt enterBeltUnit (~dòng 4966)
+   có thể bị NGHẼN khi belt quá dày (1208) -> đống phễu dồn -> churn/fountain.
+   Nếu nghẽn, cân nhắc cho phép nhiều điểm vào (nhiều BELT_ENTRY_TH) hoặc nhả nhanh hơn.
+
+E) KIỂM TRA THỨ TỰ & CAP: collideFallers() chạy SAU stepFaller mỗi frame và cộng
+   xung vận tốc (A.vx+=j*nx...) -> có thể bơm lại vận tốc khiến đống churn. Cân nhắc
+   damping vận tốc trong collideFallers cho cube ở y<picBottomY.
+
+F) ĐỪNG QUÊN: nếu sửa xong, cập nhật doc Jelly_Drop_3D_MECHANIC_SPEC.txt (mục 4.4
+   "VÙNG LẮNG ĐÁY KHUNG" và 4.6 "CUBE TRÔI THEO MÁNG"). KHÔNG build lại từ game_core.js.
+
+--------------------------------------------------------------------------------
+6. CÁC THAY ĐỔI KHÁC ĐÃ LÀM TRONG SESSION (không liên quan bug xoay, để biết)
+--------------------------------------------------------------------------------
+  - Màu tranh: PALETTE (~dòng 4476) đổi [2]=0x9a9a9a (XÁM, nền mèo), [3]=0x141414
+    (ĐEN, thân mèo). CAT_FG=3, CAT_BG=2 (~dòng 4609-4610). (Yêu cầu: nền trắng->xám,
+    thân đen.) generateLevel() ~dòng 4611, CAT_BITMAP ~dòng 4587.
+  - maxBeltCubes: 483 -> 1208 (~dòng 4494). (Yêu cầu: tăng số jelly qua đáy khung
+    sang conveyor ~2.5 lần.)
+
+--------------------------------------------------------------------------------
+7. HÀM/VỊ TRÍ THAM CHIẾU NHANH (Jelly_Drop_3D.html, số dòng ~ tương đối)
+--------------------------------------------------------------------------------
+  const PALETTE              ~4476
+  CFG {...}                  ~4479 (maxBeltCubes ~4494, funnelY 0.4, feedFloorY 0.32,
+                                    phys.maxSpin 1.6, funnel.chuteHalf 0.42)
+  CAT_BITMAP / CAT_FG / CAT_BG / generateLevel  ~4587..4622
+  enterBeltUnit              ~4966
+  tryFeedBelt                ~4998
+  updateBeltSpin             ~5044  (ĐÃ gỡ tumble)
+  stepFaller                 ~5099  (settling ~5121)
+  collideFallers             ~5180
+  update() faller render     ~5270..5295 (chốt spin ~5283: if(f.y<picBottomY())...)
+  belt render loop           ~5343+ (drop rotation.y+=dt*7 ~5352; updateBeltSpin ~5367)
+  picBottomY()               (helper, search "function picBottomY")
+  funnelHalfAt(y)            (helper)
+
+--------------------------------------------------------------------------------
+8. CÁCH CHẠY / KIỂM THỬ
+--------------------------------------------------------------------------------
+  - Chơi: double-click Jelly_Drop_3D.html (hoặc kéo vào Chrome). Ctrl+F5 để chắc
+    chắn nạp bản mới (tránh cache).
+  - Dev nhanh hơn (nhưng dùng game_core.js CŨ — KHÔNG khớp con mèo): jelly3d_src/
+    game.html. CHỈ dùng nếu bạn đồng bộ ngược fix sang game_core.js; nói chung
+    NÊN bám file (A).
+  - Có sẵn vài test script trong jelly3d_src/tools/ (test_settle.js, test_ride.js,
+    probe_belt.js...) nhưng chúng nhắm game_core.js (cũ) — cẩn trọng khi dùng.
+
+================================================================================
+ HẾT. Trọng tâm cho session sau: (1) XÁC MINH BẰNG MẮT loại cube nào xoay,
+ (2) nghi vấn lớn chưa loại trừ = DROP animation rotation.y+=dt*7 (~dòng 5352),
+ (3) đừng build lại từ game_core.js, (4) chỉ sửa trong Jelly_Drop_3D.html.
+================================================================================

@@ -51,7 +51,12 @@ ASSET tham chiếu hình ảnh (KHÔNG nạp vào game, chỉ để xem mẫu kh
   gameplay_1_game_2.mp4  — QUAN TRỌNG: mẫu băng chuyền. Belt là MÁNG racetrack
                            (vành khuyên giữa tường TRONG và NGOÀI); jelly xếp DÀY,
                            ĐÈ/CHỒNG lên nhau, chạy vòng, chỉ rớt ra khi gặp lọ cùng màu.
-  Ảnh của level demo.jpg — ảnh tham chiếu bức tranh demo.
+  Ảnh của level demo.jpg — ảnh tham chiếu bức tranh demo (cũ).
+  test 4.jpg            — ẢNH TRANH DEMO HIỆN TẠI (2026-06-27): WALLPAPER KHỐI GỖ SƠN xếp DẢI CẦU VỒNG
+                          trên nền tối (blue/teal/green/yellow/orange/red + navy). Bake thành LEVEL_BITMAP
+                          20×20 (lưới CHỈ SỐ MÀU 0..6) + KHỬ-LẺ (mọi ô có ≥1 hàng xóm cùng màu) nhúng trong
+                          code (generateLevel) — không nạp file lúc chạy. Script bake: tools/bake_level_test4.js.
+  test 1/2/3.jpg        — (cũ) mèo đen / wallpaper sóng / khối bo tròn, đã THAY bằng test 4.jpg.
 
 --------------------------------------------------------------------------------
 2. NỀN TẢNG KỸ THUẬT (đã được kiểm chứng — nên theo)
@@ -107,9 +112,20 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
 
 4.1 BỨC TRANH & CHẠM
   - Tranh = lưới GRID[N][N], mỗi ô mang 1 chỉ số màu trong palette 7 màu, hoặc
-    "trống" (đã rơi). Sinh tranh bằng hàm generateLevel() (canvas 2D vẽ cảnh trừu
-    tượng: trời/mặt trời/táo/cỏ...) rồi snap mỗi pixel về palette -> tạo các VÙNG
-    MÀU LIỀN LỚN để cơ chế flood-fill có nghĩa.
+    "trống" (đã rơi). Sinh tranh bằng hàm generateLevel() từ 1 BITMAP NHÚNG SẴN
+    (hằng LEVEL_BITMAP 20×20, ref: "test 4.jpg" — wallpaper KHỐI GỖ DẢI CẦU VỒNG). Mỗi ký tự là
+    CHỈ SỐ MÀU '0'..'6' (đã map ảnh sang palette 7 màu). Bake sẵn -> level TỰ CHỨA
+    & TẤT ĐỊNH (không nạp ảnh async, không dính CORS file://). generateLevel() nearest-
+    sample bitmap về lưới N rồi đổi mỗi ký tự thành chỉ số (charCodeAt-48). Dùng đủ CẢ 7
+    màu (navy/blue/teal/green/yellow/orange/red).
+    *** KHỬ Ô LẺ (yêu cầu người chơi 2026-06-27 "không để khối jelly màu nào đứng 1 mình"):
+    sau khi quantize, chạy 1 pass DE-ISOLATION trên lưới bake — lặp tới khi MỌI ô có ≥1 ô
+    CÙNG MÀU kề (4 hướng). Ô lẻ được nhập vào màu của HÀNG XÓM KHÔNG-LẺ (cụm ổn định) đông
+    nhất -> đảm bảo hội tụ, không dao động. Hệ quả: cụm nhỏ nhất luôn ≥2 ô, floodFill không
+    bao giờ chọn 1 ô đơn, canDrop có ý nghĩa hơn. (Đây là bước OFFLINE khi bake bitmap, KHÔNG
+    chạy lúc game; muốn đổi tranh phải bake + khử-lẻ lại rồi dán vào LEVEL_BITMAP.) ***
+    (Muốn đổi tranh: re-bake ảnh khác sang lưới chỉ số 20×20 + khử-lẻ thay vào LEVEL_BITMAP,
+    hoặc chỉnh PALETTE cho khớp màu ảnh.)
   - Vẽ tranh bằng 1 InstancedMesh (mỗi ô = 1 instance jelly cube, màu theo ô).
   - CHẠM (tap, KHÔNG swipe): raycaster từ điểm chạm -> instanceId -> toạ độ ô (r,c).
 
@@ -123,6 +139,19 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
     xuống đáy bàn) đều TRỐNG hoặc thuộc chính cụm đó.
     -> Nghĩa là cụm phải có "đường thoát" thẳng xuống.
   - Nếu bị chặn (không có đường thoát) -> NHÁY ĐỎ cụm (flashBlocked), không rơi.
+  *** GIỚI HẠN MẬT ĐỘ ĐỐNG (fix "đáy khung VẪN xoay tít khi quá dày", 2026-06-27): nguyên nhân
+  còn lại là ĐỐNG QUÁ DÀY ở đáy khung -> cube chen/churn dữ dội (nhìn như xoay tít). Cách trị theo
+  yêu cầu người chơi: KẸP số cube tối đa trong phễu/đống = CFG.maxHeapCubes (mặc định 75; trước là 50). Khi click
+  1 cụm hợp lệ:
+      room = maxHeapCubes - fallers.length  (fallers.length = số cube đang RƠI/ trong đống)
+      * room <= 0  -> đống đã đầy, NHÁY ĐỎ + HIỆN TEXT "Board is full" (mỗi lần click 1 lần, phản hồi cho
+                      người chơi biết click đã nhận nhưng bị từ chối), KHÔNG thả (chờ đống tuồn bớt lên belt).
+                      Toast: showToast() — div#toast, tự ẩn sau ~1.1s, click lại sẽ hiện lại.
+      * cụm > room -> CHỈ thả `room` ô THẤP NHẤT của cụm (sort theo HÀNG giảm dần = sát phễu nhất);
+                      phần CÒN LẠI vẫn nằm trong tranh, click lại sau khi đống vơi.
+      * cụm <= room -> thả cả cụm như cũ.
+  Nhờ đó đống ở đáy luôn THƯA, LẮNG êm thay vì churn. KHÔNG giảm tổng lượng jelly qua belt (đống chỉ
+  là bộ đệm; belt vẫn đầy tới maxBeltCubes theo thời gian) — chỉ cần click nhiều lần cho cụm lớn.
 
 4.4 VẬT LÝ RƠI (mô phỏng 2D tự viết trong mặt phẳng tranh XY)
   Khi cụm rơi (startFallCluster): mỗi ô biến thành 1 "faller" có trạng thái
@@ -135,12 +164,67 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
        dần khi xuống thấp -> dồn khối về giữa.
     d) "Sàn" tại feedFloorY: cube nằm lại, không rơi xuyên.
   collideFallers(): va chạm CUBE-CUBE (tách mềm, 2 vòng nới) -> các cube xếp thành
-  ĐỐNG, không chồng đè vô lý.
+  ĐỐNG, không chồng đè vô lý. Đồng thời ĐẾM "load" mỗi cube = số cube ĐÈ LÊN TRÊN nó.
   Hệ quả: cube LĂN xuống qua các vùng màu chưa chọn + khung, dồn về giữa, CHẤT ĐỐNG
-  ở miệng phễu (NHÌN THẤY ĐƯỢC, không biến mất). Cube kẹt quá phys.life giây thì bị
-  dồn thẳng xuống đống (chống treo).
+  ở miệng phễu (NHÌN THẤY ĐƯỢC, không biến mất).
+  *** BỎ "NET" TELEPORT CHỐNG-TREO (yêu cầu người chơi 2026-06-27 "bỏ net vì vẫn bị teleport"):
+  Trước đây cube kẹt quá phys.life=9s bị TELEPORT thẳng xuống họng phễu (f.y=feedFloorY). Dù đã có SAND
+  DRAIN, thỉnh thoảng net vẫn snap 1 cube xuống = nhìn như teleport. ĐÃ GỠ HẲN net (faller render loop).
+  An toàn: KHÔNG thể deadlock WIN — thắng cần board trống; khi MỌI terrain đã rơi thì không còn gì chặn
+  faller, nên mọi cube còn lại tự rơi xuống feedFloor & tuồn lên belt. Cube bị chặn giờ chỉ NẰM YÊN trên
+  terrain (như cát trên gờ) tới khi người chơi dọn cụm bên dưới -> nó drain xuống. (phys.life hiện KHÔNG
+  còn dùng.)
+  *** SAND DRAIN (fix bug "phần cụm bị chặn tự nhiên biến mất rồi hiện trên conveyor", 2026-06-27):
+  canDrop() chỉ cần 1 cột của cụm có đường thoát là cho RƠI CẢ cụm. Những ô của cụm nằm TRÊN cụm
+  màu khác CHƯA thả (terrain) khi rơi sẽ ĐÁP lên terrain đó. Cube nằm phẳng trên terrain nhận pháp
+  tuyến HƯỚNG THẲNG LÊN -> KHÔNG có lực ngang -> KẸT tại chỗ, tới khi quá phys.life=9s bị TELEPORT
+  thẳng xuống họng phễu = đúng cái người chơi thấy "biến mất rồi hiện trên belt". Cách trị (stepFaller,
+  ngay sau khối va chạm terrain): MÔ PHỎNG CÁT RƠI — khi cube còn TRONG TRANH (y>picBottomY) & CHẬM
+  (speed<1.0) mà ô NGAY DƯỚI bị chặn, thì nếu ô CHÉO-DƯỚI mở (down-left/down-right) NUDGE vx về phía
+  đó để cube TRƯỢT xuống lỗ; nếu cả 2 chéo bị chặn nhưng còn lối ngang thì ĐI VỀ TÂM (họng phễu ở
+  giữa-dưới tranh). Nhờ vậy ô bị chặn TRƯỢT/đổ thác xuống đường thoát & rơi THẤY ĐƯỢC (~2-3s) thay vì
+  kẹt rồi teleport. Cube THỰC SỰ kẹt trong túi kín (không lối nào) thì NẰM YÊN chờ người chơi dọn terrain
+  bên dưới (không còn teleport). (Kiểm: tools/drain_test.js — single-cell, left/right-block, staircase đều
+  drain xuống feedFloor; pocketed nằm yên.) ***
   Trên đường rơi và trên belt, cube có hiệu ứng JELLY: wobble (lắc nhẹ), squash &
   stretch (bóp/giãn), bob (nhún) -> cảm giác mềm.
+  XOAY = LĂN-HOẶC-PHANH THEO VA CHẠM TIẾP TUYẾN (mô hình MỚI — KHÔNG dựa "số cube đè"):
+  mỗi va chạm (terrain / tường phễu / sàn) tính vt = vận tốc TIẾP TUYẾN rồi quyết định:
+    * |vt| > 1.2 (đang TRƯỢT NHANH, vd lăn xuống dốc tranh)  -> LĂN: f.vang = -vt/r.
+    * |vt| <= 1.2 (chạm nhẹ / đang lắng / bị chen trong đống) -> PHANH: f.vang *= 0.5
+  *** VÙNG LẮNG ĐÁY KHUNG (settling zone — FIX "đáy khung lại quay tít"): ở ĐÁY KHUNG TRANH
+  (đống chờ ngay trên belt) đống bị churn liên tục nên vt có những CÚ NHÁY > 1.2 -> nhánh LĂN
+  ở trên sẽ TÁI-SLAM vang về maxSpin mỗi lần 2 cube chạm -> đống "quay nhanh lên" thay vì dừng
+  (đúng lỗi người dùng báo). Cách sửa: tính cờ settling = (cube bị ĐÈ, load>=1) HOẶC (f.y <
+  picBottomY(), tức MỌI cube nằm DƯỚI ĐÁY TRANH = toàn bộ phễu + đống). Khi settling = true thì
+  MỌI va chạm tiếp tuyến (terrain/tường/sàn) CHỈ PHANH (vang *= 0.5), KHÔNG bao giờ tái tạo lăn.
+  THÊM CHỐT CỨNG (ở vòng render): mọi cube có f.y < picBottomY() bị ÉP vang *= 0.5 + snap->0 MỖI
+  FRAME bất kể vận tốc -> đống ở đáy DỪNG XOAY kể cả khi vẫn đang chen/churn. (Lỗi trước: vùng
+  settling chỉ phủ y<funnelY+1.0 nên cube lăn trong PHỄU phía trên vẫn bị cap ~1.6 rad/s & quay
+  liên tục = "xoay tít"; đó là FALLER chứ không phải belt cube.) Cube còn TRÊN tranh (y>=picBottomY)
+  vẫn lăn bình thường khi trượt, chỉ ngừng khi đã chạm đất & chậm.
+  THÊM (fix "vẫn xoay tít + bắn cube khác lên"): khi đông cube (đã ×2.5 = 1208) nhồi vào HỌNG
+  HẸP, đống thật sự DI CHUYỂN NHANH (>1.2) nên vẫn bị tái-lăn + va chạm BẮN nhau LÊN. Cách trị:
+  trong vùng settling, khi cube CHẠM môi trường thì BÒN tốc độ tuyến: f.vx*=0.6, dập mạnh thành
+  phần ĐI LÊN (f.vy>0 -> *0.45) để họng hẹp NGỪNG phóng cube lên, và vang*=0.45. Cú đẩy ngang
+  ±0.25 của tường cũng KHÔNG áp khi settling (khỏi bơm thêm năng lượng vào đống). Nhờ đó đống ở
+  đáy LẮNG XUỐNG đứng yên thay vì churn/quay/phun. Cube TRƯỢT NHANH xuống dốc TRANH (terrain nằm
+  TRÊN vùng này) vẫn LĂN bình thường.
+      (giảm DẦN tốc độ xoay mỗi va chạm rồi DỪNG). Đây chính là yêu cầu "va tiếp tuyến
+      thì giảm dần spin rồi dừng", thay cho việc TÁI-tạo spin lăn mỗi frame (lỗi cũ khiến
+      đống ở đáy khung xoay mãi vì trong đống luôn còn vt nhỏ -> vẫn bị set lăn).
+  Sau mỗi substep còn 1 lớp rỉ khi contact (vang*=0.55..0.92 theo speed); cube RƠI TỰ DO
+  (không chạm) giữ gần nguyên spin (*0.98) nên vẫn tumble trong không khí. Tường phễu
+  KHÔNG còn cú đá ±3 hằng số; cú đẩy ngang ±0.25 chỉ áp khi cube còn di chuyển.
+  KẸP TỐC ĐỘ XOAY CHẬM: |vang| <= phys.maxSpin (mặc định 1.6 rad/s, THAY hằng ±4 cũ)
+  -> khi CÓ ÍT cube, đống ở đáy khung chỉ lăn CHẬM, không quay tít lúc đông.
+  PHANH KHI VA TIẾP TUYẾN CUBE-CUBE: collideFallers — mỗi lần 2 cube CHẠM nhau, ngoài đặt
+  f.contactCube còn ép vang*=0.55 cho cả hai (2 vòng relax -> rỉ mạnh). Cube bị chen trong
+  đống KHÔNG lăn xuyên hàng xóm được nên spin tắt về 0; cube tự do / chạm nhẹ vẫn lăn.
+  Ở VÒNG RENDER nếu (f.resting HOẶC f.contactCube) và speed<0.5 thì ép vang*=0.4 + snap->0
+  -> chốt đứng yên.
+  => đống vẫn lăn/nhúc nhích lúc CÒN trượt nhanh, nhưng PHANH về đứng yên ngay khi lắng /
+  bị chồng đè (va tiếp tuyến) — kể cả ở ĐÁY KHUNG TRANH (đoạn chờ trước khi tuồn lên belt).
 
 4.5 TUỒN LÊN BĂNG CHUYỀN (feed)
   - tryFeedBelt() mỗi frame: lấy cube THẤP NHẤT trong đống và đưa LÊN belt — BẤT KỂ
@@ -150,29 +234,98 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
         màu (findTargetJar). Không có gì biến mất; mọi thứ luôn di chuyển.
   - Đống ở phễu chỉ còn lại khi belt đã ĐẦY pool (maxBeltCubes).
   - Giữ giãn cách khi cube mới vào belt (beltEntryClear / beltGap).
+  *** FIX BUG "cube biến mất rồi đột nhiên hiện trên conveyor" (2026-06-27): initFallerPool dựng
+  sẵn 200 mesh ĐÃ scene.add. Nhưng getFaller() cũ khi pool cạn lại "return fallerPool.pop() ||
+  new THREE.Mesh(...)" — mesh MỚI KHÔNG được scene.add -> faller đó RƠI VÔ HÌNH. Từ khi nâng
+  maxBeltCubes lên 1208, đống chờ thường > 200 cube nên pool cạn LIÊN TỤC -> nhiều faller tàng
+  hình suốt lúc rơi, chỉ "hiện ra" khi được tuồn lên belt (mesh belt thì đã ở trong scene). Sửa:
+  getFaller() khi phải tạo mesh mới thì set castShadow + scene.add(m) (giống initFallerPool) ->
+  MỌI faller đều thấy được khi rơi. ***
 
 4.6 BĂNG CHUYỀN = MÁNG PACK (cơ chế đặc trưng — mô phỏng vật lý 2D trong vành khuyên)
   Mục tiêu: cube xếp DÀY, ĐÈ/CHỒNG lên nhau, TRẢI NGANG nhiều "hàng", chạy vòng
   trong máng oval, giống video mẫu gameplay_1_game_2.mp4.
   Toạ độ mỗi cube trên belt: (th = góc quanh vòng, rho = vị trí NGANG 0..1 giữa
   tường-trong rho=0 và tường-ngoài rho=1).
-  Mỗi frame:
-    1) BĂNG CUỐN cả đám:  th += omega * dt   (omega = beltSpeed * 2π).
+  Mỗi frame (THỨ TỰ QUAN TRỌNG):
+    1) BĂNG CUỐN cả đám:  th += omega * dt   (omega = beltSpeed * 2π). NGAY tại đây cũng
+       tăng thFlow (GÓC BĂNG-CUỐN RIÊNG, chỉ do conveyor, KHÔNG bị pack động vào) để dò
+       target + TEST CỔNG (xem dưới) — TRƯỚC khi pack.
     2) packBeltCubes(): va chạm cube-cube bằng RELAXATION theo (th, rho), dùng
        broadphase theo góc (chỉ so các cube gần nhau về góc -> O(n·k), nhẹ).
        -> cube DỒN lại (đè nhau, khoảng cách cặp nhỏ hơn cạnh cube) và TRẢI NGANG.
+       Mỗi cú đẩy còn tích _kick (độ lấn) để tạo SPIN va chạm (xem tumble dưới).
     3) CLAMP rho về [0,1] mỗi frame = TƯỜNG máng (trong/ngoài) -> cube KHÔNG tràn
-       ra ngoài máng.
-    4) beltWorld(th, rho) -> ra toạ độ thế giới + áp wobble/squash/bob.
+       ra ngoài máng. (Tường NGOÀI = viền trắng ngoài = rim; xem mục 5.6.)
+       *** TƯỜNG NGOÀI LÙI THEO GÓC CUBE (fix tràn rim): cube TUMBLE nên GÓC của nó
+       chìa ra xa hơn nửa-cạnh. measureBeltChannel lùi tường NGOÀI 1 BÁN KÍNH "có tính
+       góc" cubeRo=cell*0.60 (thay vì cubeR=cell*0.46) -> THÂN cube xoay vẫn nằm GỌN
+       trong road, KHÔNG leo lên/đè viền rim. Tường TRONG giữ cubeR=0.46 để road đủ rộng. ***
+    4) beltWorld(th, rho) -> ra toạ độ thế giới + áp wobble/squash/bob (KHÔNG tumble).
+  - CUBE TRÔI THEO MÁNG, KHÔNG XOAY: mỗi cube có wob (lắc jelly).
+    updateBeltSpin() = KHÔNG TUMBLE, CUBE CHỈ TRÔI (cách MỚI — fix dứt điểm "đống ở
+    đáy khung/cửa vào belt xoay tít mãi", VẪN GIỮ mật độ pack). Vì sao các mô hình "lăn" đều
+    HỎNG: băng chuyền CUỐN CẢ ĐÁM đi quanh vòng cùng nhau -> th của MỌI cube đều +~omega*dt mỗi
+    frame dù tự do hay bị kẹt; mọi spin lấy từ chuyển động đó (base=omega) hoặc từ kick va chạm
+    đều KHÔNG BAO GIỜ DỪNG -> đống dày cứ quay tại chỗ. Nên BỎ HẲN tumble: cube giữ HƯỚNG ỔN
+    ĐỊNH, chỉ yaw CHẬM bám hướng đi quanh oval (rotation.y = th -> ~1 vòng yaw mỗi lap = KHÔNG
+    phải spin nhìn thấy được; cube KẸT thì th gần như đứng -> gần như bất động), + lắc jelly
+    NHỎ trên 2 trục kia (sin(wob)*0.05). KHÔNG tích lũy rx/ry/rz, KHÔNG cộng base/kick -> không
+    thể "cuốn lên". vrx/vry tồn dư bị bòn về 0. packBeltCubes + clamp rho (mật độ/tường) GIỮ
+    NGUYÊN -> cube vẫn xếp DÀY, chỉ NẰM YÊN thay vì quay.
+    *** FIX BUG "object VẪN xoay tít" (2026-06-27): bỏ NỐT yaw rotation.y = th. Camera là góc
+    GẦN-CHÍNH-DIỆN (cam.pos z=20.5 nhìn hơi từ trên), nên yaw 1 vòng/lap vẫn ĐỌC ra thành cube
+    quay chậm quanh trục đứng -> người chơi vẫn báo "xoay tít". Giờ cube giữ HƯỚNG CỐ ĐỊNH:
+    rotation.set(sin(wob*1.7)*0.05, 0, cos(wob*1.3)*0.05) — chỉ lắc jelly nhỏ, KHÔNG yaw theo th,
+    KHÔNG tích lũy gì. (Cube là khối jelly gần lập phương nên hướng cố định không lệch thị giác.) ***
+  *** XOAY THEO HƯỚNG DI CHUYỂN (yêu cầu người chơi 2026-06-27 "tôi muốn jelly xoay theo hướng di chuyển
+    trên conveyor"): cube được ĐỊNH HƯỚNG sao cho trục FORWARD của nó chỉ theo TIẾP TUYẾN của máng tại
+    góc th hiện tại, UP = pháp tuyến mặt máng (beltAxN). Băng cuốn cube quanh oval -> tiếp tuyến đổi ->
+    cube xoay mặt theo hướng đang đi = HEADING THẬT, KHÔNG phải spin tự do. Tính: tiếp tuyến local =
+    (-Rmaj·sin th, Rmin·cos th) theo (beltAxA, beltAxB); dựng basis makeBasis(right, up, fwd) ->
+    quaternion; cộng wobble jelly nhỏ trên 2 trục local. KHÔNG quay lại lỗi "xoay tít": hướng là HÀM
+    THUẦN của (th,rho), KHÔNG tích lũy theo omega/kick, nên cube KẸT (th đứng) GIỮ NGUYÊN hướng, chỉ
+    cube được băng cuốn mới xoay. Hàm: updateBeltSpin. ***
+  *** XOAY RIÊNG TỐC ĐỘ TỪNG CUBE (yêu cầu người chơi 2026-06-27 "mỗi khối jelly xoay ở 1 tốc độ khác
+    nhau"): ngoài heading, mỗi cube CHỌN 1 spinRate ngẫu nhiên 1 LẦN (CFG.beltSpinRange, có cả dấu âm/dương
+    -> xoay 2 chiều), rồi cộng dồn 1 góc xoay quanh TRỤC PHÁP TUYẾN máng (local Y, rotateY(spinAng)). Góc
+    này tích từ delta-th THẬT mỗi frame (KHÔNG từ dt) nên cube KẸT (th không tiến) NGỪNG xoay, không quay
+    tại chỗ ("xoay tít"). Mỗi cube vì vậy quay ở tốc độ KHÁC NHAU mà đống kẹt vẫn đứng. Chỉnh tổng thể bằng
+    CFG.beltSpinScale (0 = tắt, chỉ còn heading). Hàm: updateBeltSpin. ***
   - Khi cube mới vào belt: random nhiều giá trị rho -> xếp nhiều hàng ngang ngay từ
     cửa vào.
-  - Mỗi cube giữ bc.target (lọ mục tiêu). Nếu target "stale" (lọ biến mất/đổi) ->
-    nhả target, tìm lọ khác.
-  - Khi cube tới CỔNG của lọ cùng màu (slotGateT — vị trí góc tương ứng X của lọ
-    trên cung TRƯỚC của máng; phát hiện bằng hàm crossed()): set bc.drop = {from,to}
-    và cube RỚT THEO CUNG (arc + squash/plop) từ mép belt xuống miệng lọ trong
-    ~0.36s, XONG mới deliverToJar() và nhả mesh.
-      * Giữ reservation cho tới khi cube đáp xong -> không vượt capacity của lọ.
+  - Mỗi cube giữ bc.target (lọ "nhà" — CHỈ để pickJarDef đếm demand & trải tải; nhả
+    booking reserved khi stale). NHƯNG việc RỚT KHÔNG còn do reservation quyết định.
+  - RỚT THEO KHOẢNG CÁCH (fix bug "chỉ vài cube vào lọ"): khi cube băng qua CỔNG của
+    BẤT KỲ lọ cùng màu nào còn CHỖ THẬT (J.filled + J.inFlight < J.capacity) -> RỚT
+    vào lọ đó, KHÔNG cần là target đã đặt trước. Lý do bug cũ: reservation đặt theo
+    THỨ TỰ tuồn lên (feed), nên cube ở phía xa "book" hết suất của lọ; cube đang đi
+    NGAY TRÊN miệng lọ lại không book được -> không có target -> CHẠY QUA LỌ. Giờ ai
+    tới cổng trước & lọ còn chỗ thì cube đó vào. J.inFlight (đếm cube đang bay vào lọ)
+    tăng NGAY lúc commit nên cùng 1 frame không bao giờ vượt capacity; khi đáp xong
+    inFlight-- rồi deliverToJar(). Cube set bc.drop={jar,from,to} và RỚT THEO CUNG
+    (arc + squash/plop) từ mép belt xuống miệng lọ ~0.36s.
+    *** FIX BUG "object VẪN xoay tít" (2026-06-27): bỏ "bc.mesh.rotation.y += dt*7" trong anim
+    drop. Đây là nguồn SPIN NHANH cuối cùng còn sót (~400°/s suốt 0.36s cung bay) — với 1208 cube
+    × nhiều màu RỚT liên tục thì luôn có 1 đám cube đang xoay nhanh ngay trên các lọ = đúng "xoay
+    tít" người chơi thấy. Giờ cube GIỮ NGUYÊN hướng khi rớt; squash/plop đã đủ diễn tả cú đáp. ***
+    *** TEST CỔNG DÙNG thFlow (fix bug "chỉ vài cube vào lọ", còn lại CHẠY QUA):
+    crossed() test trên GÓC BĂNG-CUỐN RIÊNG thFlow ([prevFlow -> thFlow]), KHÔNG dùng
+    th (góc THẬT đã bị pack động vào). thFlow tăng ĐÚNG omega*dt mỗi frame, KHÔNG bao giờ
+    bị packBeltCubes sửa -> MỌI cube cắt qua mỗi cổng ĐÚNG 1 LẦN/vòng. Nhờ đó tránh CẢ HAI
+    lỗi: (a) pack ĐẨY cube VƯỢT cổng mà test cũ (chỉ xét băng-cuốn [prevTh->prevTh+omega*dt]
+    của th) KHÔNG thấy -> cube đi NGAY TRÊN miệng lọ vẫn chạy qua (chính là bug đang gặp);
+    (b) lỗi rớt-sớm cũ: gần 2 đầu elip tiếp tuyến NGẮN, planarToThRho khuếch đại cú đẩy pack
+    -> cube bị "văng" qua cổng dù băng chưa cuốn tới. Vì thFlow bỏ qua pack nên cả (a) và (b)
+    đều hết. TETHER an toàn: nếu cube kẹt lâu (th hầu như đứng còn thFlow vẫn cộng), kẹp thFlow
+    không LEAD th quá 0.35 rad -> drop luôn phát ra GẦN cổng, không "trôi" cả vòng.
+    *** FIX BUG "cube nhảy vào lọ dù đang Ở XA lọ" (2026-06-27): băng dải an toàn cũ là 1.2 rad
+    (~69°) — trong đống DÀY 1208 cube, 1 cube bị kẹt thường tụt lại SAU thFlow của nó tới ~69°,
+    nên khi thFlow cắt cổng lọ thì cube launch cung drop từ vị trí THẬT (th) còn cách lọ rất xa
+    => nhìn như "nhảy" vào lọ từ xa. Siết tether xuống 0.35 rad (~20°, vẫn rộng hơn jitter pack
+    bình thường) -> lúc cổng được cắt, vị trí THẬT của cube ĐÚNG ngay trên miệng lọ, cung drop bắt
+    đầu tại đó, KHÔNG teleport. (Kiểm: tools/test_gate.js.) ***
+      * J.inFlight giữ tới khi cube đáp xong -> filled+inFlight không vượt capacity.
       * Cube đang drop vẫn được tính là "còn trên belt" -> không thắng sớm.
   - Cube CHƯA có lọ -> cứ pack/chạy trong máng, không tràn, không biến mất.
   => Theo thời gian hệ HỘI TỤ: mọi cube đều tìm được lọ và game tiến tới WIN.
@@ -216,9 +369,18 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
   cam          : {fov:40, pos:[0,5.6,20.5], look:[0,2.2,0]}.
   jarCapMin / jarCapMax : khoảng random sức chứa lọ (≈ 28..70).
   beltSpeed    : tốc độ cuốn băng chuyền (vòng/giây nhân vào omega).
-  maxBeltCubes : số cube tối đa trên belt cùng lúc (≈ 322 cho cảm giác xếp dày ~7x;
-                 dùng pool mesh cùng cỡ).
+                 (Cube trên belt tự xoay mặt theo hướng di chuyển = tiếp tuyến máng; xem updateBeltSpin/4.6.)
+  beltSpinScale: hệ số tổng cho XOAY RIÊNG của từng cube trên belt (0 = tắt, chỉ heading). Xem 4.6.
+  beltSpinRange: [lo,hi] khoảng tốc độ xoay mỗi cube tự chọn (vòng/lap) -> mỗi cube quay 1 tốc độ khác nhau,
+                 gắn delta-th thật nên cube kẹt vẫn dừng. Xem 4.6.
+  maxBeltCubes : số cube tối đa trên belt cùng lúc (≈ 1208 = 2.5× giá trị cũ 483) -> cho
+                 ~2.5× nhiều jelly hơn được CHUI QUA ĐÁY KHUNG TRANH để sang băng chuyền;
+                 xếp dày hơn nhiều; dùng pool mesh cùng cỡ.
   beltGap      : (legacy) giãn cách tối thiểu khi cube vào belt.
+  maxHeapCubes : KẸP số cube tối đa trong phễu/đống cùng lúc (≈ 75 = 1.5× giá trị cũ 50, theo yêu cầu
+                 người chơi 2026-06-27 cho thả thêm jelly). 1 click chỉ thả các ô THẤP
+                 NHẤT của cụm tới hết `room` còn lại; phần dư ở lại tranh, click lại sau. Giữ đống
+                 THƯA để LẮNG êm (chống "xoay tít"/churn khi quá dày). Xem 4.3.
 
   beltPack     : {collR, soft, iters, win}
                  collR = bán kính va chạm cube (×cell),
@@ -227,16 +389,20 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
                  win   = cửa sổ góc cho broadphase.
                  (Tăng collR -> xếp thưa hơn; giảm -> đè dày hơn.)
 
-  phys         : {g, rest, wallRest, fric, maxV, life}
+  phys         : {g, rest, wallRest, fric, maxV, life, maxSpin}
                  g=trọng lực, rest=đàn hồi va chạm cube-cube, wallRest=đàn hồi với
-                 tường, fric=ma sát, maxV=tốc độ tối đa, life=thời gian tối đa 1 cube
-                 còn là "faller" trước khi bị dồn xuống đống.
+                 tường, fric=ma sát, maxV=tốc độ tối đa, life=(KHÔNG CÒN DÙNG — net teleport
+                 chống-treo đã bị gỡ theo yêu cầu người chơi 2026-06-27),
+                 maxSpin=KẸP tốc độ xoay tối đa của cube rơi (rad/s, ≈ 1.6 -> đống lăn
+                 CHẬM; giảm nữa = xoay chậm hơn).
                  (Muốn rơi chậm/nảy hơn: giảm g, tăng rest.)
 
   funnel       : {chuteHalf} — nửa-rộng họng phễu (chỗ hẹp nhất, ≈ 0.42).
   feedFloorY   : cao độ "sàn" để cube chất đống & tuồn lên belt (≈ 0.32).
 
-  Palette      : 7 màu (mảng màu hex). Mỗi màu map sang 1 dòng lọ.
+  Palette      : 7 màu (mảng màu hex), KHỚP ảnh "test 4.jpg" (cầu vồng dải). Mỗi màu map sang 1 dòng lọ.
+                 [0]=NAVY, [1]=BLUE, [2]=TEAL, [3]=GREEN, [4]=YELLOW, [5]=ORANGE, [6]=RED.
+                 Tranh demo khối bo tròn dùng ĐỦ cả 7 màu.
 
 --------------------------------------------------------------------------------
 5.5 ĐO HÌNH HỌC MÁNG TỪ MESH BELT (quan trọng khi đổi asset)
@@ -246,32 +412,74 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
        sample các đỉnh MẶT-TRÊN (top face) của mesh.
     2) Suy ra oval (bán trục aMax, bMax) + cao độ mặt trên.
     3) Tính ra bộ CH = {
-         Ao, Bo : bán trục tường NGOÀI,
-         Ai, Bi : bán trục tường TRONG (hệ số co vào trong, vd ~0.42*ngoài),
+         Ao, Bo : bán trục tường NGOÀI = viền trắng NGOÀI (rim) = TƯỜNG VẬT LÝ,
+         Ai, Bi : bán trục tường TRONG = viền trắng TRONG,
          heightN: cao độ "ngồi" của cube,
          Rmaj   : bán trục giữa (dùng đặt cổng lọ).
        }
+       *** KHỚP ROAD (xem 5.6): tường KHÔNG suy ra bằng hệ số tuỳ ý nữa, mà ĐO/KHỚP
+       theo đúng dải "road" vẽ trên mặt băng, dùng chung 2 hằng BELT_BW (bề dày viền)
+       & BELT_ROAD (bề rộng dải cube chạy). Tường NGOÀI lùi vào tới MÉP-TRONG của rim
+       (KHÔNG phải tâm rim): CH.Ao = oA - wall - cubeRo, với wall = BELT_BW*bMax =
+       NỬA bề dày viền trắng, và cubeRo = cell*0.60 = bán kính CÓ TÍNH GÓC (cube TUMBLE
+       nên góc chìa ra xa hơn nửa-cạnh cell*0.46). Nhờ vậy THÂN cube xoay nằm GỌN trong
+       road, KHÔNG đè/chàn lên viền rim. Tường TRONG dùng cubeR=cell*0.46 (road đủ rộng).
+       (Lỗi cũ: trừ cubeR=0.46 cả 2 phía -> góc cube xoay vẫn leo lên rim.)
+       Có guard: nếu road quá hẹp (CH.Ao<=CH.Ai) thì gộp về 1 làn giữa. ***
     4) beltWorld(th, rho, lift): nội suy giữa tường trong (rho=0) và ngoài (rho=1)
        theo góc th, đặt cao độ heightN + lift, rồi đưa từ hệ local belt ra world.
     5) planarToThRho(): hàm nghịch để map vị trí phẳng -> (th, rho) khi cube vào belt.
     6) slotGateT(jarX): góc cổng của lọ = vị trí trên cung TRƯỚC khớp với X của lọ,
-       dùng Rmaj (vd th = 2π − acos(x / Rmaj)).
+       dùng Rmaj (vd th = 2π − acos(x / Rmaj)). LƯU Ý lọ NGOÀI (x=±3) > Rmaj nên bị
+       clamp -> cổng nằm đúng 2 đầu elip (cap) — chỗ tiếp tuyến ngắn (liên quan fix
+       bug rớt sớm ở 4.6).
   -> Đổi asset belt khác kích thước thì các hàm này TỰ canh lại, không cần sửa số.
+
+--------------------------------------------------------------------------------
+5.6 MẶT BĂNG HIỂN THỊ + RIM = TƯỜNG (2 đối tượng tách rời — bổ sung cho khớp HTML)
+--------------------------------------------------------------------------------
+  Băng chuyền HIỂN THỊ chia làm 2 phần tách rời:
+  (A) KHUNG VIỀN (rim/outline) = MESH FBX THẬT ("Băng chuyền.fbx"). buildBelt() gán
+      material TRẮNG phát sáng nhẹ -> trông như đường VIỀN bao quanh. Đây là phần
+      "vật lý" duy nhất: viền NGOÀI = TƯỜNG (cube bị clamp rho không tràn qua).
+  (B) MẶT BĂNG (belt surface) = KHÔNG từ FBX, SINH BẰNG CODE: 1 THREE.Mesh
+      PlaneGeometry phẳng đặt KHÍT lên mặt-trên-oval của khung, ở ngay DƯỚI tầng cube.
+      Material MeshBasicMaterial map bằng 1 CanvasTexture VẼ LẠI MỖI FRAME gồm 3 lớp:
+        1. nền xanh-grey (#647689) cắt theo hình pill (clip stadium),
+        2. dải MŨI TÊN trắng nhạt chạy dọc đường tâm road, lặp vô tận quanh oval,
+        3. 2 viền outline trắng -> "mặt đường" (road) nằm giữa 2 viền.
+  HÌNH HỌC: stadiumPoint(d,s)/stadiumPath(d) — pill = 2 đoạn thẳng + 2 nửa cung tròn;
+      mỗi mũi tên xoay theo hướng tiếp tuyến nên luôn "chỉ về phía trước".
+  ANIMATE: buildBeltSurface() trả về callback beltSurfaceUpdate; mỗi frame animate()
+      gọi nó -> phase -= perMid*0.0016 -> drawBelt() lại -> mũi tên TRÔI quanh vòng.
+      (Quên gọi -> mũi tên đứng im.)
+  HẰNG DÙNG CHUNG (1 nguồn sự thật cho cả mặt vẽ & máng vật lý): BELT_BW=0.085 (bề
+      dày viền, theo phân số chiều cao canvas PH), BELT_ROAD=0.30 (bề rộng road).
+      buildBeltSurface vẽ viền/road bằng đúng 2 hằng này; measureBeltChannel đặt
+      tường CH theo đúng 2 hằng này -> mặt băng vẽ và tường vật lý LUÔN ĐỒNG BỘ.
+  CHỈNH NHANH (trong buildBeltSurface): tốc/hướng mũi tên = hệ số 0.0016; khoảng cách
+      mũi tên = arrowGap; cỡ mũi tên = aSize; bề rộng road = BELT_ROAD; viền = BELT_BW;
+      màu nền = '#647689'.
+  HÀM/BIẾN: buildBelt, measureBeltChannel (đặt CH + beltTopA/B/Z), buildBeltSurface,
+      beltSurfaceUpdate, hằng BELT_BW/BELT_ROAD.
 
 --------------------------------------------------------------------------------
 6. HÀM CHÍNH NÊN CÓ (gợi ý cấu trúc code)
 --------------------------------------------------------------------------------
   Khởi tạo : loadFBX, normalize, generateLevel, buildBoard(InstancedMesh),
-             buildBelt + measureBeltChannel, buildJars, buildJarQueue.
+             buildBelt + measureBeltChannel + buildBeltSurface, buildJars, buildJarQueue.
   Tương tác: onTap -> raycast -> tapCell(r,c) -> floodFill -> canDrop -> startFallCluster
              / flashBlocked.
   Vòng update mỗi frame:
-             stepFaller (mỗi faller) -> collideFallers -> tryFeedBelt ->
-             [belt] th+=omega*dt -> packBeltCubes -> clamp rho -> beltWorld + jelly fx
-             -> dò target / crossed cổng -> bc.drop arc -> deliverToJar ->
+             stepFaller (mỗi faller; settle spin theo load) -> collideFallers (đếm load)
+             -> tryFeedBelt ->
+             [belt] th+=omega*dt + dò target + crossed CỔNG (TRƯỚC pack!) -> set bc.drop
+             -> packBeltCubes (xếp/đè + clamp rho + tích _kick) -> beltWorld + jelly fx
+             + updateBeltSpin (tumble) -> bc.drop arc -> deliverToJar ->
              cập nhật lọ (capping/leaving/spawn) -> checkWin.
+             animate() ngoài update còn gọi beltSurfaceUpdate() (mũi tên mặt băng trôi).
   Tiện ích : funnelHalfAt(y), findTargetJar(color), pickJarDef, slotGateT,
-             crossed(prevTh, th, gateTh), enterBeltUnit(chọn rho trống),
+             crossed(prevTh, th, gateTh), enterBeltUnit(chọn rho trống), updateBeltSpin,
              releaseBeltCube, spawnJarIntoSlot.
 
 --------------------------------------------------------------------------------
@@ -281,6 +489,7 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
   - Hint nhỏ ("Chạm vào mảng màu để thả").
   - Loader (chờ nạp FBX, vài giây).
   - Overlay WIN khi thắng.
+  - Toast "Board is full" (div#toast, đỏ, giữa màn) khi đống đầy mà người chơi vẫn click màu (xem 4.3).
   - Nhãn trên mỗi lọ: số cube CÒN THIẾU; khi đầy hiện ✓.
 
 --------------------------------------------------------------------------------
@@ -291,11 +500,17 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
     chính xác tuyệt đối.
   - collideFallers là O(n²): thả HÀNG TRĂM cube cùng lúc thì nặng. Chơi tay (thả từng
     cụm) thì nhẹ và đẹp. Nếu cần thả ồ ạt mượt hơn -> thêm spatial-hash.
-  - packBeltCubes O(n·k) nhờ broadphase -> 322 cube vẫn nhẹ trên GPU thật.
+  - packBeltCubes O(n·k) nhờ broadphase -> vẫn nhẹ ở mức ~vài trăm cube; với maxBeltCubes
+    đã nâng lên ~1208 thì nặng hơn (nhiều cặp pack hơn) — nếu giật, giảm maxBeltCubes hoặc
+    beltPack.iters, hoặc thêm spatial-hash.
   - Asset KHÔNG có texture gốc -> chỉ màu material thuần.
   - Khung tranh viền MẢNH (hình học gốc), không dày như mockup.
-  - Tranh demo là cảnh trừu tượng sinh tự động để có vùng màu liền lớn cho flood-fill.
-    Muốn đổi tranh -> sửa generateLevel() hoặc nạp 1 lưới màu có sẵn.
+  - Tranh demo là WALLPAPER KHỐI GỖ DẢI CẦU VỒNG (theo test 4.jpg) bake thành LEVEL_BITMAP 20×20
+    (lưới chỉ số màu) nhúng sẵn, dùng ĐỦ 7 MÀU -> nhiều loại lọ, đa dạng màu. Đã KHỬ Ô LẺ
+    (mọi ô có ≥1 hàng xóm cùng màu) nên không còn khối đứng 1 mình. Ảnh là các DẢI NGANG nên
+    level cũng XẾP DẢI (clear gần như từ dưới lên); ảnh có 3 dải ấm (cam/đỏ/nâu) mà palette chỉ
+    có 2 ô ấm (orange/red) nên dải nâu-maroon map về RED. Muốn đổi tranh -> re-bake ảnh khác sang
+    lưới chỉ số 20×20 + khử-lẻ thay vào LEVEL_BITMAP (+ chỉnh PALETTE nếu cần). Script: tools/bake_level_test4.js.
 
 --------------------------------------------------------------------------------
 9. CHECKLIST NGHIỆM THU (game coi như đạt khi)

@@ -7,6 +7,84 @@ Tài liệu này để bạn (hoặc 1 session Claude khác) tiếp tục làm v
 Đọc hết phần 0–3 là đủ để bắt đầu sửa/đóng gói lại.
 
 --------------------------------------------------------------------------------
+*** CẬP NHẬT 2026-06-27 (bản vá #7 — XOAY CHẬM + RIM + RỚT ĐỦ CUBE + ẢNH MÈO) đọc TRƯỚC ***
+--------------------------------------------------------------------------------
+!! NGUỒN CHÍNH = Jelly_Drop_3D.html (sửa TRỰC TIẾP). game_core.js đã CŨ, ĐI SAU HTML
+   (thiếu inFlight/proximity-drop). ĐỪNG chạy tools/build_single.js để build lại từ
+   game_core.js — sẽ REGRESS mất các bản vá #6/#7. Mọi sửa nay làm thẳng trên HTML.
+
+4 yêu cầu xử lý (sửa trong Jelly_Drop_3D.html; tài liệu SPEC §4.1/4.4/4.6/5/5.5 đã cập nhật):
+ (1) GIỚI HẠN XOAY KHI RƠI: thêm phys.maxSpin=1.6 (rad/s) thay hằng kẹp ±4 -> đống ở
+     ĐÁY KHUNG chỉ lăn CHẬM. collideFallers: mỗi va chạm cube-cube ép vang*=0.55 cả hai
+     -> VA TIẾP TUYẾN thì spin tắt về 0 (cube chen trong đống không lăn xuyên hàng xóm).
+ (2) CUBE TRÀN LÊN RIM CONVEYOR: measureBeltChannel lùi tường NGOÀI theo bán kính CÓ
+     TÍNH GÓC cubeRo=cell*0.60 (cube tumble nên góc chìa xa hơn nửa-cạnh 0.46); tường
+     TRONG giữ 0.46. updateBeltSpin hạ spin (base=omega*1.0, kick*4/*2.5, kẹp ±1.8) để
+     góc cube không vung ra road. -> thân cube nằm GỌN trong road, không leo viền rim.
+ (3) "CHỈ VÀI CUBE VÀO LỌ, CÒN LẠI CHẠY QUA": test cổng ĐỔI sang dùng thFlow — GÓC
+     BĂNG-CUỐN RIÊNG chỉ do conveyor tăng (omega*dt/frame), KHÔNG bị packBeltCubes sửa.
+     Mỗi cube nay cắt qua mỗi cổng ĐÚNG 1 lần/vòng -> MỌI cube cùng màu, lọ còn chỗ, đều
+     RỚT (lỗi cũ: pack đẩy cube vượt cổng mà test [prevTh->th] không thấy). Tether kẹp
+     thFlow không lead th quá 1.2 rad (cube kẹt lâu vẫn rớt gần cổng, không trôi cả vòng).
+ (4) ĐỔI ẢNH GAME THÀNH CON MÈO ĐEN (test 1.jpg): bake thành hằng CAT_BITMAP 20×20 nhúng
+     trong generateLevel (tự chứa, không async/CORS). Thân mèo = đỏ-mận (3), nền = teal (2).
+
+--------------------------------------------------------------------------------
+*** CẬP NHẬT 2026-06-27 (bản vá #6 — XOAY JELLY + FIX RỚT LỌ SỚM) — đọc TRƯỚC ***
+--------------------------------------------------------------------------------
+3 yêu cầu, tất cả sửa trong game_core.js (rồi build_single.js -> Jelly_Drop_3D.html).
+
+(1a) ĐỐNG CHỜ (fallers) KẸT Ở ĐÁY KHUNG — XOAY CÓ GIỚI HẠN, NẰM YÊN KHI ĐÃ LẮNG:
+   VẤN ĐỀ: khi belt gần đầy, cube rơi xuống đáy khung nhưng chưa lên được conveyor
+     -> chất đống ở miệng phễu và XOAY TRÒN LIÊN TỤC (rối mắt).
+   NGUYÊN NHÂN CHÍNH (đã tìm đúng sau lần sửa đầu): TƯỜNG PHỄU. Ở họng phễu hẹp,
+     cube bị ép vào tường; mỗi frame nhánh va tường set f.vang-=3 / +=3 (spin kick)
+     KÈM cú đẩy ngang hằng số ±0.25 — đều KHÔNG bị giới hạn -> cube nằm sát tường cứ
+     bị hích & quay mãi. (Hệ "load" ở lần sửa đầu chỉ chặn cube bị CHÔN sâu >=2 lớp;
+     cube ở RÌA đống cạnh tường có load<2 nên vẫn quay -> đúng như bạn thấy.)
+   SỬA (đúng trọng tâm): thêm trạng thái "resting" theo TỐC ĐỘ: cube CHẬM (speed<0.5)
+     và NẰM DƯỚI đáy tranh (y<picBottomY) coi như đã LẮNG -> hệ số settle=0 nên MỌI
+     nguồn spin (tường ±3, sàn, terrain) bị tắt; cú đẩy ngang ±0.25 của tường cũng
+     CHỈ áp khi cube còn lao vào tường (không áp cho cube đang nằm yên). resting còn
+     rỉ vang mạnh hơn (*0.6) + tăng ma sát ngang (vx*=0.55) cho mau đứng im. Vẫn giữ
+     "load" (đè >=2 -> dừng) + kẹp |vang|<=4 để khi CÒN rơi/lăn thì vẫn xoay tự nhiên.
+   ĐO KIỂM (tools/test_settle.js, MỚI): chất ~286 cube (belt full), 97.6% cube trong
+     đống ĐỨNG YÊN (avg|vang|=0.041); chỉ ~2.4% còn xoay = cube vừa rơi tới, chưa lắng.
+   HÀM ĐỤNG TỚI: collideFallers (thêm f.load), stepFaller (resting + settle/decay/cap,
+     gate spin tường & cú đẩy hằng số), vòng render fallers (freeze khi load>=2/resting).
+
+(1b) CUBE TRÊN CONVEYOR — XOAY NHẸ + VA CHẠM ĐẨY NHAU (giữ tường rim):
+   TRƯỚC: cube trên belt chỉ set rotation.y=th (đứng yên hướng ra ngoài), nhìn như
+     trượt chứ không "lăn". SỬA: mỗi belt cube có trạng thái tumble tự do
+     (rx,ry,rz + vrx,vry). updateBeltSpin(bc,dt,omega): LĂN NỀN nhẹ theo băng
+     (base=omega*1.3) + CỘNG spin kick mỗi khi bị packBeltCubes() đẩy (tích _kick =
+     tổng độ lấn của các va chạm trong frame; vrx += kick*7, vry += kick*4) rồi rỉ
+     dần (*0.95) + kẹp [-3,3]. -> cube lăn nhẹ lúc thường, XÓC/QUAY mạnh hơn khi
+     chen lấn. packBeltCubes() đã có va chạm đẩy nhau từ bản vá #3; nay cộng thêm
+     spin để THẤY RÕ chúng đẩy nhau. TƯỜNG RIM (clamp rho∈[0,1]) GIỮ NGUYÊN — cube
+     vẫn không tràn ra ngoài máng.
+   HÀM ĐỤNG TỚI: enterBeltUnit (thêm field rx/ry/rz/vrx/vry/_kick), packBeltCubes
+     (cộng A._kick/B._kick=push), updateBeltSpin (MỚI), vòng render belt (gọi
+     updateBeltSpin thay cho rotation.y=th).
+
+(2) FIX BUG "rớt vào lọ ngay khi vừa lên conveyor" (thay vì tới gần cổng mới rớt):
+   NGUYÊN NHÂN: test cổng crossed(prevTh, th, gate) chạy SAU packBeltCubes(), nên
+     khoảng [prevTh -> th] BAO GỒM cả cú nhảy góc do PACK đẩy. Gần 2 đầu elip (cap)
+     tiếp tuyến T=d(pos)/d(th) NGẮN -> planarToThRho KHUẾCH ĐẠI cú đẩy thành dth lớn
+     -> cube bị "văng" qua cổng dù băng chưa cuốn nó tới đó -> trông như rớt tức thì,
+     nhất là khi đông (gần full). Mà cổng các lọ NGOÀI (x=±3) lại nằm đúng 2 đầu cap.
+   SỬA: chuyển TEST CỔNG vào TRƯỚC packBeltCubes(), dùng CHỈ phần băng cuốn:
+     prevTh=th; th+=omega*dt; rồi crossed(prevTh, prevTh+omega*dt, gate). Pack vẫn
+     chạy sau (chỉ lo xếp/đè + tường), KHÔNG còn ảnh hưởng tới việc rớt lọ. Việc dò
+     target (findTargetJar) cũng dời lên cùng chỗ. => cube chỉ rớt khi BĂNG thật sự
+     cuốn nó qua cổng lọ cùng màu.
+   ĐO KIỂM (tools/test_gate.js, MỚI): 41 lần rớt, badGate=0 (mọi cú rớt cách cổng
+     <0.0031 vòng ~ đúng 1 frame băng), nearEntryDrop=0 (không cube nào rớt ở cửa
+     vào). test_ride: insideWalls=true vẫn giữ. test_win: 4 lọ active đều nhận đều,
+     không deadlock (drain cả board trong headless software-GL thì nặng, không kịp
+     WIN trong ngân sách test — chơi tay thả từng cụm thì nhẹ).
+
+--------------------------------------------------------------------------------
 *** CẬP NHẬT 2026-06-27 (bản vá #5 — MÁNG VẬT LÝ = KHUNG VIỀN (rim)) — đọc TRƯỚC ***
 --------------------------------------------------------------------------------
 YÊU CẦU: jelly CHỈ chạy trên MẶT BĂNG (belt surface = "đường"/road giữa 2 viền

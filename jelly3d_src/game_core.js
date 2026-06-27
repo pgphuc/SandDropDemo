@@ -486,7 +486,10 @@ function enterBeltUnit(color, target){
   m.visible=true; m.material.color.setHex(PALETTE[color]);
   const Rmaj=CH.Ai+(CH.Ao-CH.Ai)*rho, Rmin=CH.Bi+(CH.Bo-CH.Bi)*rho;
   beltCubes.push({mesh:m, th:BELT_ENTRY_TH, rho, color, target, drop:null, wob:rnd()*TAU,
-                  prevTh:BELT_ENTRY_TH, _a:Rmaj*Math.cos(BELT_ENTRY_TH), _b:Rmin*Math.sin(BELT_ENTRY_TH)});
+                  prevTh:BELT_ENTRY_TH, _a:Rmaj*Math.cos(BELT_ENTRY_TH), _b:Rmin*Math.sin(BELT_ENTRY_TH),
+                  // free-tumble state: cubes roll gently while the belt carries them and get extra
+                  // spin kicks when they bump/shove each other (see updateBeltSpin + packBeltCubes).
+                  rx:rnd()*TAU, ry:rnd()*TAU, rz:rnd()*TAU, vrx:0, vry:0, _kick:0});
   return true;
 }
 // Slide the lowest piled cube onto the belt (whether or not a jar of its colour is active yet).
@@ -517,6 +520,7 @@ function packBeltCubes(){
         if(d2>=rr*rr) continue;
         if(d2<1e-9){ dx=0.01; dy=(k&1?0.01:-0.01); d2=dx*dx+dy*dy; }
         const d=Math.sqrt(d2), nx=dx/d, ny=dy/d, push=(rr-d)*0.5*soft;
+        A._kick+=push; B._kick+=push;                                  // harder shove -> livelier tumble
         const ap=planarToThRho(A.th,A.rho,-nx*push,-ny*push);
         const bp=planarToThRho(B.th,B.rho, nx*push, ny*push);
         A.th+=ap[0]; A.rho=clamp(A.rho+ap[1],0,1);
@@ -527,6 +531,21 @@ function packBeltCubes(){
     }
   }
 }
+// Gentle free-tumble for a packed belt cube: a slow base roll (the belt carrying it forward) plus
+// decaying spin kicks accumulated in packBeltCubes when it shoves a neighbour. Replaces the old
+// fixed rotation.y=th so the cubes now visibly ROLL and react to collisions while still riding the
+// trough (rho clamp / rim wall is untouched -- this only spins the mesh in place).
+function updateBeltSpin(bc, dt, omega){
+  const base=omega*1.3;                                  // gentle forward roll from the conveyor
+  const kick=bc._kick; bc._kick=0;                       // collision shove accumulated this frame
+  bc.vrx=clamp((bc.vrx+kick*7+(rnd()-0.5)*0.5)*0.95, -3.0, 3.0);
+  bc.vry=clamp((bc.vry+kick*4+(rnd()-0.5)*0.4)*0.95, -3.0, 3.0);
+  bc.rx+=(base+bc.vrx)*dt;
+  bc.ry+=(base*0.35+bc.vry)*dt;
+  bc.rz+=bc.vrx*0.45*dt;
+  bc.mesh.rotation.set(bc.rx, bc.ry, bc.rz);
+}
+
 // find an active, non-full jar of this color with spare (capacity - filled - reserved)
 function findTargetJar(color){
   for(const J of jars){
@@ -576,6 +595,16 @@ function releaseFaller(m){ m.visible=false; fallerPool.push(m); }
 // advance one faller with gravity + collision against remaining picture cells and frame walls
 function stepFaller(f, dt){
   const P=CFG.phys, SUB=2, h=dt/SUB, N=CFG.N, cell=CFG.cell, half=cell/2;
+  const ld=f.load||0;
+  // A cube that is slow AND sitting below the picture (in the funnel / feed pile) is "resting":
+  // it should settle still, not keep twirling. This is the key case -- cubes squeezed into the
+  // narrow funnel throat used to get a ±3 spin kick from the side walls every single frame.
+  const speed0=Math.hypot(f.vx,f.vy);
+  const resting = speed0 < 0.5 && f.y < picBottomY();
+  f.resting = resting;
+  // settle = how freely the cube may still spin: NONE when buried (>=2 on top) OR resting,
+  // half with one cube on top, full while free-falling/rolling.
+  const settle = (ld>=2 || resting) ? 0 : (ld>=1 ? 0.45 : 1);
   for(let s=0;s<SUB;s++){
     f.vy += P.g*h;
     // clamp speed
@@ -603,25 +632,32 @@ function stepFaller(f, dt){
           f.x+=nx*push; f.y+=ny*push;
           const vn=f.vx*nx+f.vy*ny;
           if(vn<0){ f.vx-=(1+P.rest)*vn*nx; f.vy-=(1+P.rest)*vn*ny; }
-          // tangential -> rolling spin + slight friction
+          // tangential -> rolling spin + slight friction (suppressed once the cube is buried)
           const tx=-ny, ty=nx, vt=f.vx*tx+f.vy*ty;
-          f.vang = -vt/Math.max(f.r,1e-3);
+          f.vang = -vt/Math.max(f.r,1e-3)*settle;
           f.vx*=P.fric;
         }
       }
     }
     // --- frame / funnel side walls ---
+    // The constant inward nudge (±0.25) and the spin kick (±3) only apply when the cube is actually
+    // driving INTO the wall (not resting against it) -> a settled pile no longer jitters/twirls.
     const lim=funnelHalfAt(f.y)-f.r;
-    if(f.x> lim){ f.x= lim; f.vx=-Math.abs(f.vx)*P.wallRest-0.25; f.vang-=3; }
-    if(f.x<-lim){ f.x=-lim; f.vx= Math.abs(f.vx)*P.wallRest+0.25; f.vang+=3; }
+    if(f.x> lim){ f.x= lim; f.vx=-Math.abs(f.vx)*P.wallRest-(resting?0:0.25); f.vang-=3*settle; }
+    if(f.x<-lim){ f.x=-lim; f.vx= Math.abs(f.vx)*P.wallRest+(resting?0:0.25); f.vang+=3*settle; }
     // --- feed floor: cubes pile here (just above the belt) until fed onto the belt ---
     const floorY=CFG.feedFloorY+f.r;
-    if(f.y<floorY){ f.y=floorY; if(f.vy<0) f.vy=-f.vy*P.rest; f.vx*=0.86; f.vang=-f.vx/Math.max(f.r,1e-3); }
+    if(f.y<floorY){ f.y=floorY; if(f.vy<0) f.vy=-f.vy*P.rest; f.vx*=(resting?0.55:(ld>=2?0.7:0.86)); f.vang=-f.vx/Math.max(f.r,1e-3)*settle; }
+    // bleed off + cap the spin so a resting/jammed pile doesn't keep whirling (harder when resting)
+    f.vang*=(resting?0.6:0.9); if(f.vang>4)f.vang=4; else if(f.vang<-4)f.vang=-4;
   }
 }
-// pairwise soft separation so cubes stack/pile instead of overlapping (jelly heap)
+// pairwise soft separation so cubes stack/pile instead of overlapping (jelly heap).
+// Also counts each cube's LOAD = how many cubes rest on top of it, so a buried cube can stop
+// spinning (see stepFaller / the faller render loop) instead of twirling forever in the pile.
 function collideFallers(){
   const n=fallers.length, P=CFG.phys;
+  for(let a=0;a<n;a++) fallers[a].load=0;
   for(let it=0;it<2;it++){
     for(let a=0;a<n;a++){ const A=fallers[a];
       for(let b=a+1;b<n;b++){ const B=fallers[b];
@@ -632,6 +668,7 @@ function collideFallers(){
         A.x-=nx*push; A.y-=ny*push; B.x+=nx*push; B.y+=ny*push;
         const rvn=(B.vx-A.vx)*nx+(B.vy-A.vy)*ny;
         if(rvn<0){ const j=rvn*0.5*(1+P.rest); A.vx+=j*nx; A.vy+=j*ny; B.vx-=j*nx; B.vy-=j*ny; }
+        if(it===0){ if(dy>A.r*0.35) A.load++; else if(dy<-B.r*0.35) B.load++; }  // who is sitting on whom
       }
     }
   }
@@ -712,6 +749,7 @@ function update(dt){
     // approach the belt's z-plane as the cube descends past the picture
     const zT = clamp((picBottomY()-f.y)/Math.max(0.01,picBottomY()-CFG.feedFloorY),0,1);
     const z = lerp(CFG.boardZ, CFG.belt.pos[2], zT);
+    if((f.load||0)>=2 || f.resting){ f.vang*=0.4; if(Math.abs(f.vang)<0.12) f.vang=0; }  // pinned/resting -> settle still
     f.mesh.position.set(f.x, f.y, z);
     f.mesh.rotation.set(0,0,f.ang);
     // jelly squash based on vertical speed
@@ -725,10 +763,26 @@ function update(dt){
     }
   }
   tryFeedBelt();
-  // ---- advance belt cubes: conveyor drift, then PACK them inside the trough, then resolve ----
+  // ---- advance belt cubes: conveyor drift (+ gate test) FIRST, then PACK them inside the trough ----
   const omega=CFG.beltSpeed*TAU;
-  for(const bc of beltCubes){ if(bc.drop) continue; bc.prevTh=bc.th; bc.th+=omega*dt; }  // the whole pack is carried around
-  packBeltCubes();                                                                        // cube-cube packing + wall clamp
+  for(const bc of beltCubes){
+    if(bc.drop) continue;
+    bc.prevTh=bc.th; bc.th+=omega*dt;                       // the whole pack is carried around by the belt
+    // (re)acquire a jar: drop a stale target (jar got capped by other cubes), then look for a match
+    if(bc.target && (bc.target.state!=='active' || bc.target.full || bc.target.color!==bc.color)) bc.target=null;
+    if(!bc.target){ const J=findTargetJar(bc.color); if(J){ J.reserved++; bc.target=J; } }
+    // GATE CROSSING is tested on the CONVEYOR ADVANCE ONLY (prevTh -> prevTh+omega*dt), BEFORE packing.
+    // The cube exits only when the belt genuinely carries it past its jar's gate. (Previously the test
+    // ran AFTER packBeltCubes, so the large angular jitter packing injects near the loop ends could
+    // fling a cube across a gate and make it "teleport" into a jar the instant it landed on the belt.)
+    const J=bc.target;
+    if(J && J.state==='active' && !J.full && crossed(bc.prevTh/TAU, bc.th/TAU, slotGateT(J.slot))){
+      beltWorld(bc.th, bc.rho, 0, _p);                      // launch the drop from where it sits on the rim
+      bc.drop={t:0, from:_p.clone(),
+               to:new THREE.Vector3(CFG.jarSlotsX[J.slot], CFG.jarsY+0.30, 0.02)};
+    }
+  }
+  packBeltCubes();                                          // cube-cube packing + wall clamp (visual placement)
   for(let i=beltCubes.length-1;i>=0;i--){
     const bc=beltCubes[i];
     // ---- cube is leaving the belt: play the "fall into the jar" animation, then deposit ----
@@ -753,16 +807,7 @@ function update(dt){
     bc.mesh.position.copy(_p);
     const sq=1+Math.sin(bc.wob*1.3)*0.12;       // wobble squash (jelly)
     bc.mesh.scale.set(1/Math.sqrt(sq),sq,1/Math.sqrt(sq));
-    bc.mesh.rotation.y=bc.th + bc.wob*0.1;
-    // drop stale targets (jar got capped by other cubes), then (re)acquire a jar
-    if(bc.target && (bc.target.state!=='active' || bc.target.full || bc.target.color!==bc.color)) bc.target=null;
-    if(!bc.target){ const J=findTargetJar(bc.color); if(J){ J.reserved++; bc.target=J; } }
-    // exit ONLY when reaching the gate of a matching jar -> physically drop into it (no blink-out)
-    const J=bc.target;
-    if(J && J.state==='active' && !J.full && crossed(bc.prevTh/TAU, bc.th/TAU, slotGateT(J.slot))){
-      bc.drop={t:0, from:bc.mesh.position.clone(),
-               to:new THREE.Vector3(CFG.jarSlotsX[J.slot], CFG.jarsY+0.30, 0.02)};
-    }
+    updateBeltSpin(bc, dt, omega);              // gentle rolling tumble + collision spin (replaces fixed yaw)
   }
   // ---- jar fill anim & slide
   for(const J of jars){
