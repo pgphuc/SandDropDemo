@@ -161,11 +161,15 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
     'jelly_mode' (sống qua reload). Biến interactionMode (1|2) trong IIFE:
       KIỂU 1 = CỤM (onTap): chạm 1 mảng màu -> floodFill -> canDrop -> thả CẢ cụm. DUYỆT TỪ VỊ TRÍ CHẠM
         (xem 4.3) thay vì trái-sang-phải.
-      KIỂU 2 = QUÉT (releaseAt): chạm/kéo (swipe) -> CHỈ thả ô đang chạm, KÉO tới đâu thả tới đó.
-        KHÔNG còn luật canDrop (ô nào cũng release được, kể cả cột bị chặn). Vẫn tôn trọng maxHeapCubes
-        (đống đầy -> toast "Board is full"). pointerdown bắt đầu kéo + setPointerCapture; pointermove
-        (khi đang giữ) thả ô mới; _lastReleaseCell dedup để kéo qua 1 ô chỉ thả 1 lần; pointerup/cancel
-        kết thúc kéo. (Swipe nhanh có thể bỏ qua vài ô giữa 2 frame move — chấp nhận được.) ***
+      KIỂU 2 = QUÉT (releaseAt): chạm/kéo (swipe) -> thả các ô trong 1 CỌ TRÒN bán kính CFG.releaseBrushR
+        (cells) quanh điểm chạm, KÉO tới đâu thả tới đó. KHÔNG còn luật canDrop (ô nào cũng release được,
+        kể cả cột bị chặn). Vẫn tôn trọng maxHeapCubes (đống đầy -> toast "Board is full"; nếu cọ > room
+        thì thả các ô GẦN ĐIỂM CHẠM nhất tới hết room). pointerdown bắt đầu kéo + setPointerCapture;
+        pointermove (khi đang giữ) thả cọ mới; _lastReleaseCell dedup theo Ô TÂM để giữ trong 1 ô không
+        bắn lặp; pointerup/cancel kết thúc kéo. (Swipe nhanh có thể bỏ qua vài ô tâm giữa 2 frame move.)
+        TIẾT DIỆN RELEASE = CFG.releaseBrushR: mặc định 1.5 (cọ ~3x3 = ~9 ô); 0 = đúng 1 ô; tăng = cọ rộng.
+        *** startFallCluster đọc MÀU THEO TỪNG Ô (GRID[r][c]) chứ không lấy màu ô đầu -> cọ phủ nhiều màu
+        thì mỗi cube giữ đúng màu của nó. Kiểu 1 (cụm 1 màu) không đổi. ***
   *** TÁCH THÀNH CUBE KHI BẤM: khi cụm hợp lệ rơi (startFallCluster), MỖI ô của cụm sinh 1
     jelly cube FALLER cỡ 1 ô (FALL_R = cell*0.46) tại đúng vị trí ô, xoá ô khỏi GRID rồi
     drawPictureCubes() lại (cube tranh của ô đó được ẩn, faller thế chỗ). Vì tranh nay cũng là
@@ -472,6 +476,8 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
                  ~2.5× nhiều jelly hơn được CHUI QUA ĐÁY KHUNG TRANH để sang băng chuyền;
                  xếp dày hơn nhiều; dùng pool mesh cùng cỡ.
   beltGap      : (legacy) giãn cách tối thiểu khi cube vào belt.
+  releaseBrushR: (KIỂU 2 / QUÉT) bán kính CỌ release theo Ô. 0 = thả đúng 1 ô; 1.5 (mặc định) = cọ tròn
+                 ~3x3 (~9 ô) mỗi lần chạm; tăng để cọ rộng hơn. Vẫn bị kẹp bởi maxHeapCubes. Xem 4.1.
   maxHeapCubes : KẸP số cube tối đa trong phễu/đống cùng lúc (≈ 75 = 1.5× giá trị cũ 50, theo yêu cầu
                  người chơi 2026-06-27 cho thả thêm jelly). 1 click chỉ thả các ô THẤP
                  NHẤT của cụm tới hết `room` còn lại; phần dư ở lại tranh, click lại sau. Giữ đống
