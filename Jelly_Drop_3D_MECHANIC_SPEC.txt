@@ -12,9 +12,15 @@ MỤC ĐÍCH CỦA FILE NÀY
 0. GAME LÀ GÌ (1 đoạn tóm tắt)
 --------------------------------------------------------------------------------
 Game web 3D (three.js) trộn 2 cơ chế mobile:
-  - "Sand Sort / Pixel Drop": có 1 BỨC TRANH pixel-art treo trên khung. Người chơi
-    CHẠM vào 1 mảng màu -> cụm ô cùng màu đó RỜI khỏi tranh, RƠI xuống.
+  - "Sand Sort / Pixel Drop": có 1 BỨC TRANH pixel-art (ẢNH PIXEL 256×256) treo trên
+    khung. Mỗi VÙNG MÀU bấm được có VIỀN ĐEN (outline) bao quanh. Người chơi CHẠM vào
+    1 mảng màu -> phần màu đó RỜI khỏi tranh, TÁCH thành các KHỐI JELLY CUBE (kích thước
+    1 ô lưới hiện tại) rồi RƠI xuống.
   - "Jelly": vật liệu rơi là KHỐI THẠCH mềm/bóng (jelly cube), không phải cát.
+
+  *** CẬP NHẬT 2026-06-29: BỨC TRANH giờ là 1 ẢNH PIXEL PHẲNG (texture 256×256 trên 1
+  PlaneGeometry), KHÔNG còn là lưới InstancedMesh các cube. Lý do/đặc tả chi tiết: xem 4.1.
+  Tranh chỉ là HÌNH; jelly cube chỉ XUẤT HIỆN khi người chơi bấm (cụm tách thành cube). ***
 
 Luồng chính:
   CHẠM mảng màu  ->  khối thạch rơi xuống PHỄU  ->  trượt LÊN BĂNG CHUYỀN hình
@@ -67,9 +73,12 @@ ASSET tham chiếu hình ảnh (KHÔNG nạp vào game, chỉ để xem mẫu kh
   nhau, không dính lỗi bare-specifier / importmap.
 - Nạp FBX ASCII TRỰC TIẾP trong trình duyệt bằng FBXLoader (KHÔNG convert sang GLB,
   KHÔNG cần Python, KHÔNG cần server — mở bằng double-click chạy được).
-- Bức tranh pixel-art tạo RUNTIME bằng canvas 2D -> lưới N×N màu, snap về palette.
-- Toàn bộ khối thạch vẽ bằng 1 InstancedMesh duy nhất (hình học = jelly cube), đổi
-  màu từng instance qua instanceColor. Giữ tổng số instance ở mức vài trăm (nhẹ).
+- Bức tranh pixel-art = 1 ẢNH PHẲNG: CanvasTexture 256×256 (PIC_PX) vẽ RUNTIME bằng
+  canvas 2D từ lưới màu N×N (upscale + outline đen quanh từng cụm) đặt lên 1 PlaneGeometry.
+  Material MeshBasicMaterial {map, transparent, alphaTest} -> ô đã rơi thành LỖ trong suốt.
+  (TRƯỚC ĐÂY: tranh là InstancedMesh các jelly cube; nay tranh KHÔNG còn là cube.)
+- Khối thạch RƠI / trên belt vẽ bằng các THREE.Mesh riêng (pool jelly cube), KHÔNG instanced.
+  Cube chỉ sinh ra KHI bấm 1 cụm (startFallCluster). Giữ tổng số cube ở mức vài trăm (nhẹ).
 - Có thể đóng gói thành 1 file HTML self-contained: nội tuyến mọi <script src>
   (lib + asset base64 + logic) vào trong 1 file.
 
@@ -126,8 +135,30 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
     chạy lúc game; muốn đổi tranh phải bake + khử-lẻ lại rồi dán vào LEVEL_BITMAP.) ***
     (Muốn đổi tranh: re-bake ảnh khác sang lưới chỉ số 20×20 + khử-lẻ thay vào LEVEL_BITMAP,
     hoặc chỉnh PALETTE cho khớp màu ảnh.)
-  - Vẽ tranh bằng 1 InstancedMesh (mỗi ô = 1 instance jelly cube, màu theo ô).
-  - CHẠM (tap, KHÔNG swipe): raycaster từ điểm chạm -> instanceId -> toạ độ ô (r,c).
+  - VẼ TRANH = 1 ẢNH PIXEL PHẲNG (cập nhật 2026-06-29, thay cho InstancedMesh cũ):
+    * 1 canvas 2D kích thước PIC_PX×PIC_PX (= 256×256) làm CanvasTexture, dán lên 1
+      THREE.PlaneGeometry rộng = N*cell (đúng phạm vi bàn cũ), tâm tại boardCenter.
+    * drawPictureTexture() vẽ lại canvas từ GRID: (1) tô màu mỗi ô (upscale N×N -> 256,
+      mỗi ô = 1 block ~12.8px); (2) VIỀN ĐEN (outline) CHỈ quanh CỤM BẤM ĐƯỢC: chạy
+      floodFill + canDrop cho từng cụm, CHỈ cụm có canDrop=true (có đường thoát xuống)
+      mới được vẽ viền; cụm BỊ CHẶN (không click thả được) KHÔNG có viền. Viền vẽ trên
+      cạnh ô của cụm bấm-được giáp ô KHÁC MÀU / ô TRỐNG / mép tranh. Bề dày viền
+      ow = max(2, round(cp*0.14)) px. (Fix 2026-06-29: trước đây MỌI cụm đều có viền kể
+      cả cụm không bấm được.)
+    * Material MeshBasicMaterial {map, transparent:true, alphaTest:0.5}: ô đã rơi
+      (GRID=-1) vẽ TRONG SUỐT -> để lại LỖ nhìn xuyên qua khung (phần màu đã RỜI tranh).
+    * texture.magFilter = NearestFilter (giữ nét pixel), encoding sRGB.
+    * Vẽ lại khi: khởi tạo, sau startFallCluster (ô rơi -> lỗ, outline tự khớp lại),
+      và mỗi frame trong lúc NHÁY ĐỎ (flash) cụm bị chặn (drawPictureTexture(flashSet,k)).
+  - CHẠM (tap, KHÔNG swipe): raycaster -> giao điểm với plane -> hit.uv -> ô (r,c):
+      c = floor(uv.x * N);  r = floor((1-uv.y) * N)   (flipY của texture đưa ô r=0 lên ĐỈNH).
+    Bấm trúng LỖ (GRID[r][c]<0) thì bỏ qua.
+  *** TÁCH THÀNH CUBE KHI BẤM (yêu cầu người chơi 2026-06-29): khi cụm hợp lệ rơi
+    (startFallCluster), MỖI ô của cụm biến thành 1 jelly cube KÍCH THƯỚC = 1 ô lưới HIỆN
+    TẠI (FALL_R = cell*0.46, đúng cỡ cube cũ) tại đúng vị trí ô, rồi xoá ô khỏi GRID và
+    drawPictureTexture() lại. Tức là VÙNG MÀU phẳng trên ảnh "tách" thành các khối cube
+    có cùng cỡ như trước, rồi rơi theo vật lý ở 4.4. Logic GRID vẫn là N=20 (cụm/flood/
+    canDrop/đếm thắng không đổi) — chỉ KHÂU HIỂN THỊ tranh đổi sang ảnh 256×256. ***
 
 4.2 CHỌN CỤM (flood fill)
   - floodFill(r,c): lấy CỤM các ô CÙNG MÀU LIỀN KỀ (4 hướng: trên/dưới/trái/phải)
@@ -354,8 +385,11 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
 --------------------------------------------------------------------------------
 5. THAM SỐ CẤU HÌNH (gom vào 1 object CFG đầu file để chỉnh độ khó/layout)
 --------------------------------------------------------------------------------
-  N            : kích thước lưới tranh (mặc định 20).
-  cell         : cạnh 1 ô tranh (≈ 0.245).
+  N            : kích thước lưới tranh LOGIC (mặc định 20) — đơn vị cụm/flood/cube.
+  PIC_PX       : độ phân giải ẢNH PIXEL của tranh (texture vuông, mặc định 256). HẰNG trong
+                 code (cạnh buildPicture), KHÔNG nằm trong CFG. Lưới logic vẫn N=20 nên cube
+                 tách ra giữ "kích thước hiện tại"; PIC_PX chỉ tăng độ nét HÌNH + chỗ vẽ outline.
+  cell         : cạnh 1 ô tranh (≈ 0.245) = CỠ 1 jelly cube khi cụm tách ra.
   boardCenter  : tâm tranh (≈ {x:0, y:4.8}).
   boardZ       : z của tranh.
   frame        : {pos:[0,4.4,-0.25], width:6.0}.
@@ -487,10 +521,11 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
 --------------------------------------------------------------------------------
 6. HÀM CHÍNH NÊN CÓ (gợi ý cấu trúc code)
 --------------------------------------------------------------------------------
-  Khởi tạo : loadFBX, normalize, generateLevel, buildBoard(InstancedMesh),
+  Khởi tạo : loadFBX, normalize, generateLevel, buildPicture (ẢNH PIXEL PHẲNG: tạo
+             CanvasTexture PIC_PX×PIC_PX + PlaneGeometry) + drawPictureTexture + hexCss,
              buildBelt + measureBeltChannel + buildBeltSurface, buildJars, buildJarQueue.
-  Tương tác: onTap -> raycast -> tapCell(r,c) -> floodFill -> canDrop -> startFallCluster
-             / flashBlocked.
+  Tương tác: onTap -> raycast plane -> hit.uv -> ô (r,c) -> floodFill -> canDrop ->
+             startFallCluster (tách cụm thành cube + drawPictureTexture) / flashBlocked.
   Vòng update mỗi frame:
              stepFaller (mỗi faller; settle spin theo load) -> collideFallers (đếm load)
              -> tryFeedBelt ->
@@ -537,7 +572,9 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
 9. CHECKLIST NGHIỆM THU (game coi như đạt khi)
 --------------------------------------------------------------------------------
   [ ] Nạp đủ 5 FBX, hiển thị: tranh trong khung, belt oval nằm gần top-down, 4 lọ.
-  [ ] Chạm 1 mảng màu -> cụm cùng màu rơi; cụm bị chặn -> nháy đỏ, không rơi.
+  [ ] Tranh là ẢNH PIXEL 256×256, mỗi vùng màu bấm được có VIỀN ĐEN bao quanh.
+  [ ] Chạm 1 mảng màu -> vùng đó RỜI tranh (để lại lỗ), TÁCH thành jelly cube cỡ ô hiện
+      tại rồi rơi; cụm bị chặn -> nháy đỏ, không rơi.
   [ ] Cube rơi có trọng lực, lăn qua tranh còn lại + tường phễu, chất đống ở miệng phễu.
   [ ] Cube tuồn LÊN belt và chạy vòng dù chưa có lọ cùng màu (không biến mất).
   [ ] Trên belt cube xếp DÀY, đè nhau, trải nhiều hàng, KHÔNG tràn ra ngoài máng oval.
