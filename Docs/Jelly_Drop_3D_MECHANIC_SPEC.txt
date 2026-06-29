@@ -476,6 +476,15 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
       trường metaball với pha rơi. Offset nằm trong mặt phẳng belt (beltAxA/beltAxB), xoáy theo bc.wob
       -> pack dày GỘP thành 1 dải nước cùng màu chảy quanh máng. Dùng bc.mesh.position nên ĐÚNG cho cả
       lúc chạy máng LẪN lúc bc.drop (cung rớt vào lọ) -> trông như RÓT nước; deliverToJar vẫn 1 lần/đơn vị.
+      *** TỐC ĐỘ XOÁY CỦA DẢI NƯỚC TRÊN BELT (player request 2026-06-30 "giảm tốc độ xoay của color trên
+      belt xuống 0.1"): chuyển động xoay NHÌN THẤY ĐƯỢC của khối màu trên belt CHÍNH LÀ cụm droplet này
+      xoáy quanh tâm — góc splat = bc.wob*0.1 + k·(2π/K) (buildWaterFX, khối "(2) BELT water"). HỆ SỐ 0.1
+      đặt NGAY tại chỗ tính góc splat (TÁCH khỏi bc.wob gốc) để KHÔNG ảnh hưởng hiệu ứng nhún/bóp jelly
+      cũng dùng bc.wob (sin(wob*2.0) bob + sin(wob*1.3) squash, belt update loop). Chỉnh số 0.1 này để
+      đổi tốc độ xoáy (0 = đứng yên, chỉ còn dải nước tĩnh).
+      *** CẠM BẪY ĐÃ GẶP: updateBeltSpin / CFG.beltSpinScale (mục 4.6) xoay bc.mesh — nhưng ở Pha 2 mesh
+      này ẨN (visible=false), nên chỉnh beltSpinScale KHÔNG đổi gì trên màn hình. Mọi điều chỉnh tốc độ
+      xoay NHÌN THẤY của belt phải sửa hệ số bc.wob ở buildWaterFX (chỗ này), KHÔNG phải updateBeltSpin. ***
 
   RENDER metaball (renderWaterFX, screen-space, gọi trong animate SAU renderer.render):
     - 1 trường mật độ (WebGLRenderTarget HalfFloat): mỗi droplet splat 1 đốm radial (color*w, w) ADDITIVE.
