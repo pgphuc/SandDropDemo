@@ -152,10 +152,20 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
       ranh giới cụm chỉ còn thấy qua MÀU + bevel góc. (Muốn rõ cụm bấm-được hơn: làm mờ/đậm/nhô cube.)
     * Vẽ lại khi: khởi tạo (buildPicture), sau startFallCluster (ô rơi -> ẩn cube), và mỗi frame
       khi đang flash (drawPictureCubes(flashSet,k)); flash kết thúc -> gọi 1 lần để xoá ám đỏ.
-  - CHẠM (tap, KHÔNG swipe): raycaster giao 1 PLANE VÔ HÌNH (pictureMesh, MeshBasic opacity 0,
+  - CHẠM: raycaster giao 1 PLANE VÔ HÌNH (pictureMesh, MeshBasic opacity 0,
     depthWrite false) trùng vùng tranh -> hit.uv -> ô (r,c):
       c = floor(uv.x * N);  r = floor((1-uv.y) * N).
     Bấm trúng LỖ (GRID[r][c]<0) thì bỏ qua. (Plane chỉ để PICK; phần NHÌN là các cube.)
+    Hàm dùng chung: pickCell(clientX,clientY) -> {r,c}|null (cả 2 kiểu thao tác đều gọi).
+  *** 2 KIỂU THAO TÁC (player request 2026-06-29) — nút 🎯/👆 ở topbar đổi qua lại, lưu localStorage
+    'jelly_mode' (sống qua reload). Biến interactionMode (1|2) trong IIFE:
+      KIỂU 1 = CỤM (onTap): chạm 1 mảng màu -> floodFill -> canDrop -> thả CẢ cụm. DUYỆT TỪ VỊ TRÍ CHẠM
+        (xem 4.3) thay vì trái-sang-phải.
+      KIỂU 2 = QUÉT (releaseAt): chạm/kéo (swipe) -> CHỈ thả ô đang chạm, KÉO tới đâu thả tới đó.
+        KHÔNG còn luật canDrop (ô nào cũng release được, kể cả cột bị chặn). Vẫn tôn trọng maxHeapCubes
+        (đống đầy -> toast "Board is full"). pointerdown bắt đầu kéo + setPointerCapture; pointermove
+        (khi đang giữ) thả ô mới; _lastReleaseCell dedup để kéo qua 1 ô chỉ thả 1 lần; pointerup/cancel
+        kết thúc kéo. (Swipe nhanh có thể bỏ qua vài ô giữa 2 frame move — chấp nhận được.) ***
   *** TÁCH THÀNH CUBE KHI BẤM: khi cụm hợp lệ rơi (startFallCluster), MỖI ô của cụm sinh 1
     jelly cube FALLER cỡ 1 ô (FALL_R = cell*0.46) tại đúng vị trí ô, xoá ô khỏi GRID rồi
     drawPictureCubes() lại (cube tranh của ô đó được ẩn, faller thế chỗ). Vì tranh nay cũng là
@@ -181,9 +191,12 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
       * room <= 0  -> đống đã đầy, NHÁY ĐỎ + HIỆN TEXT "Board is full" (mỗi lần click 1 lần, phản hồi cho
                       người chơi biết click đã nhận nhưng bị từ chối), KHÔNG thả (chờ đống tuồn bớt lên belt).
                       Toast: showToast() — div#toast, tự ẩn sau ~1.1s, click lại sẽ hiện lại.
-      * cụm > room -> CHỈ thả `room` ô THẤP NHẤT của cụm (sort theo HÀNG giảm dần = sát phễu nhất);
-                      phần CÒN LẠI vẫn nằm trong tranh, click lại sau khi đống vơi.
+      * cụm > room -> CHỈ thả `room` ô; phần CÒN LẠI vẫn nằm trong tranh, click lại sau khi đống vơi.
       * cụm <= room -> thả cả cụm như cũ.
+  *** DUYỆT TỪ VỊ TRÍ CHẠM (player request 2026-06-29, chỉ KIỂU 1): trước khi thả, sort cụm theo
+  KHOẢNG CÁCH BÌNH PHƯƠNG tới ô được chạm (tăng dần) — release lan ra TỪ ĐIỂM CHẠM (thay cho thứ tự
+  cũ "trái-sang-phải / hàng thấp nhất trước"). Thứ tự này cũng quyết định ô nào rơi trước khi cụm >
+  room (lấy `room` ô GẦN ĐIỂM CHẠM nhất). KIỂU 2 thả từng ô riêng nên không áp dụng. ***
   Nhờ đó đống ở đáy luôn THƯA, LẮNG êm thay vì churn. KHÔNG giảm tổng lượng jelly qua belt (đống chỉ
   là bộ đệm; belt vẫn đầy tới maxBeltCubes theo thời gian) — chỉ cần click nhiều lần cho cụm lớn.
 
@@ -414,8 +427,22 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
         & .bitmap. Vì generateLevel/buildPicture đọc qua các biến này nên dùng luôn ảnh người
         chơi, KHÔNG đụng tới phần còn lại của game. Xoá localStorage -> trả lại tranh gốc.
       - Override LƯU RIÊNG TỪNG MÀN: ảnh nạp ở màn 1 chỉ thay tranh màn 1 (key theo idx).
-  Hàm/biến (script cuối file): gotoLevel, quantize (median-cut), deIsolate, bakeAndLoad;
-  hằng N=20, K_MAX=7. Override đọc trong IIFE cạnh CUR_LEVEL.
+      *** LƯU LẠI ẢNH GỐC (player request 2026-06-29 "track được đã dùng ảnh nào"): TRƯỚC đây baker
+        HUỶ ảnh gốc (revokeObjectURL) -> không còn bản ghi ảnh đã dùng. Nay saveUploadedImage(file,img,idx)
+        chạy ngay sau khi lưu bake, làm 2 việc:
+          (a) localStorage['jelly_level_imgsrc_<idx>'] = JSON {name, type, size, savedAt(ISO), dataURL}
+              — dataURL = ảnh THU NHỎ ≤512px (PNG, qua thumbDataURL) để VỪA QUOTA localStorage; sống qua
+              reload, dùng để biết/đọc lại ảnh đã dùng. (Bọc try/catch riêng: quota lỗi cũng KHÔNG hỏng bake.)
+          (b) TẢI 1 bản FULL-chất-lượng của file gốc xuống đĩa (thẻ <a download> tên 'jelly_level<N>_<tên>')
+              -> file thật trên máy để tra cứu. Sau đó gotoLevel hoãn 250ms (setTimeout) để download kịp
+              commit trước khi reload.
+        API window.JellyImages: list() -> [{level,name,savedAt,size}] mọi màn có ảnh đã lưu; get(idx) ->
+        bản ghi đầy đủ; download(idx) -> tải lại bản đã lưu trong trình duyệt; clear(idx) -> quên ảnh đã lưu
+        (KHÔNG khôi phục tranh built-in — muốn vậy phải xoá luôn 'jelly_level_img_<idx>'). ***
+  Hàm/biến (script cuối file): gotoLevel, quantize (median-cut), deIsolate, bakeAndLoad, thumbDataURL,
+  saveUploadedImage, window.JellyImages; hằng N=20, K_MAX=7. Override đọc trong IIFE cạnh CUR_LEVEL.
+  Key localStorage: 'jelly_level' (màn), 'jelly_level_img_<idx>' (bake), 'jelly_level_imgsrc_<idx>' (ảnh gốc),
+  'jelly_mode' (kiểu thả).
 
 --------------------------------------------------------------------------------
 5. THAM SỐ CẤU HÌNH (gom vào 1 object CFG đầu file để chỉnh độ khó/layout)
@@ -471,6 +498,18 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
   Palette      : 7 màu (mảng màu hex), KHỚP ảnh "test 4.jpg" (cầu vồng dải). Mỗi màu map sang 1 dòng lọ.
                  [0]=NAVY, [1]=BLUE, [2]=TEAL, [3]=GREEN, [4]=YELLOW, [5]=ORANGE, [6]=RED.
                  Tranh demo khối bo tròn dùng ĐỦ cả 7 màu.
+                 *** TĂNG TƯƠNG PHẢN MÀU (player request 2026-06-29 "các khối màu bị lẫn vào nhau",
+                 lần 2 "tăng độ tương phản thêm nữa, level 1 & 3 vẫn lẫn"): GỒM 2 phần.
+                 (a) GIẢM ÁNH SÁNG PHẲNG (setupRenderer): ambient 0.66->0.42, hemi 0.45->0.32, bù lại
+                     key 0.95->1.15, fill 0.35->0.45. Lý do: ambient/hemi phẳng cũ NÂNG màu tối lên xám
+                     & làm nhạt mọi cube; giảm đi -> màu tối GIỮ tối, hue GIỮ bão hoà.
+                 (b) RETUNE PALETTE CẢ 3 MÀN sang giá trị RỰC + cách xa nhau (mỗi cặp kề khác CẢ hue lẫn
+                     độ sáng):
+                     L1: [0x0d1b6e navy(tối), 0x1f5fe0 blue(vừa), 0x00d6c8 teal(cyan sáng), 0x2fbf2f green,
+                          0xffe000 yellow(sáng nhất), 0xff7a00 orange, 0xe01010 red].
+                     L2: [0xffffff trắng, 0x0a0a0a đen] (mèo gần như đen tuyền vì sáng vẫn nâng màu tối).
+                     L3: [0x0a0a12 nền gần-đen, 0xff7314 cam RỰC (cũ 0xf2b21c bị ngả vàng), 0xffffff mắt trắng].
+                 (Muốn khớp 1 ảnh PNG cụ thể: dùng nút 📷 nạp ảnh -> median-cut tự sinh palette; xem 4.9.) ***
 
 --------------------------------------------------------------------------------
 5.5 ĐO HÌNH HỌC MÁNG TỪ MESH BELT (quan trọng khi đổi asset)
@@ -576,8 +615,9 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
 7. UI / VỎ GAME
 --------------------------------------------------------------------------------
   - Topbar + thanh PROGRESS đặt ở ĐỈNH màn hình (thoáng vùng chơi).
-    Topbar trái: nút Chơi lại (↻) + nút 📷 NẠP ẢNH PNG cho màn (xem 4.9); giữa: nhãn LEVEL;
-    phải: nút Cài đặt (⚙). Phím ←/→ đổi màn. Có dòng hint nhỏ ở đáy: "← → đổi màn · 📷 nạp ảnh".
+    Topbar trái: nút Chơi lại (↻) + nút 📷 NẠP ẢNH PNG cho màn (xem 4.9) + nút ĐỔI KIỂU THẢ
+    (🎯 cụm / 👆 quét — xem 4.1, lưu localStorage 'jelly_mode'); giữa: nhãn LEVEL;
+    phải: nút Cài đặt (⚙). Phím ←/→ đổi màn. Hint đáy: "← → đổi màn · 📷 nạp ảnh · 🎯 đổi kiểu thả".
   - Hint nhỏ ("Chạm vào mảng màu để thả").
   - Loader (chờ nạp FBX, vài giây).
   - Overlay WIN khi thắng.
