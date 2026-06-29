@@ -1,0 +1,136 @@
+================================================================================
+ JELLY DROP 3D — HAND-OFF PHA 3: "ĐÁNH BÓNG NƯỚC" (render đẹp như nước thật)
+ Ngày tạo: 2026-06-29
+ File code canonical: _Game/Jelly_Drop_3D.html  (LUÔN sửa file này)
+ Đọc trước: Pha 1 (Docs/Jelly_Drop_3D_WATER_FLOW_HANDOFF.txt) + Pha 2
+            (Docs/Jelly_Drop_3D_WATER_PHA2_HANDOFF.txt) + SPEC (mục 4.7, 5.6).
+================================================================================
+
+--------------------------------------------------------------------------------
+0. MỤC TIÊU PHA 3
+--------------------------------------------------------------------------------
+  Sau Pha 1+2: nước chảy đúng (pha rơi + belt) nhưng BỀ MẶT còn "phẳng/giả" (metaball + highlight
+  giả). Pha 3 nâng CHẤT LƯỢNG HÌNH ẢNH để trông như NƯỚC THẬT, gồm 4 nhóm việc (làm dần, độc lập):
+    (A) VỆT/STREAK: droplet đang chảy kéo dài theo hướng đi -> ra "dòng" thay vì chuỗi tròn.
+    (B) MẶT NƯỚC THẬT: shader composite có normal chảy + KHÚC XẠ nền + FRESNEL + specular (kiểu Water2,
+        nhưng áp lên SHAPE do metaball quyết định — KHÔNG dùng Water2 cho pha rơi vì nó là mặt phẳng).
+    (C) LỌ DÂNG NƯỚC: lọ hiện đã có J.fillMesh (1 box scale.y dâng theo fill) -> biến thành MẶT NƯỚC
+        có gợn/khúc xạ; (tuỳ chọn) dùng THREE.Water2 cho mặt nước phẳng trong lọ.
+    (D) (tuỳ chọn) MẶT BĂNG NGẬP NƯỚC: lòng máng belt như có nước (kết hợp Pha 2).
+  KHÔNG đụng tới logic game (đếm đơn vị, cổng, thắng). Pha 3 thuần RENDER.
+
+--------------------------------------------------------------------------------
+1. HỆ RENDER NƯỚC HIỆN CÓ (điểm bắt đầu)
+--------------------------------------------------------------------------------
+  buildWaterFX/sizeWaterFX/renderWaterFX (trong _Game/Jelly_Drop_3D.html):
+    - Mỗi droplet splat 1 đốm radial (vColor*wv, wv) — wv=(1-r2)^2 — ADDITIVE vào 1
+      WebGLRenderTarget HalfFloat (RGBA): RGB = Σ màu*trọng số, A = Σ trọng số (mật độ trường).
+    - point sprite VUÔNG, isotropic (gl_PointSize), kích thước = 2*PART_R*meta*focal / dist.
+    - composite fullscreen: nơi A>threshold -> base=RGB/A (màu trung bình), a=smoothstep, normal giả
+      từ gradient của A (texel ±), specular + diff theo n.z. transparent over scene.
+  => Pha 3 chủ yếu sửa 2 shader này (point sprite + composite) và J.fillMesh.
+
+--------------------------------------------------------------------------------
+2. (A) VỆT/STREAK — droplet kéo dài theo vận tốc
+--------------------------------------------------------------------------------
+  Vấn đề: gl_PointSize chỉ ra HÌNH VUÔNG isotropic -> không kéo dài được. Để có vệt:
+  CÁCH 1 (khuyến nghị) — INSTANCED QUAD thay point sprite:
+    - Mỗi droplet = 1 quad (2 tam giác) instanced. Attribute mỗi instance: center(xy z), color,
+      velocity(vx,vy) (đưa vx,vy của droplet vào; belt droplet thì dùng tiếp tuyến máng).
+    - Vertex shader: dựng quad trong KHÔNG GIAN MÀN HÌNH, xoay theo hướng velocity, GIÃN trục dọc
+      theo |v| (clamp), trục ngang giữ nguyên -> giọt thành ELLIPSE/hạt thuôn theo dòng.
+    - Fragment: vẫn radial falloff trên toạ độ quad đã giãn -> trường mật độ thuôn -> metaball ra VỆT.
+    - Giữ nguyên ADDITIVE vào RT; composite không đổi.
+  CÁCH 2 (rẻ, kém linh hoạt) — giữ point sprite nhưng splat 2–3 đốm dọc theo vận tốc cho mỗi droplet
+    (motion-trail bằng nhiều điểm). Nhẹ về code, tốn điểm hơn.
+  THAM SỐ: thêm CFG.water.streak = độ giãn tối đa theo vận tốc (0=tròn như cũ). Vệt rõ khi rơi nhanh,
+  tròn khi lắng -> cảm giác "chảy".
+
+--------------------------------------------------------------------------------
+3. (B) MẶT NƯỚC THẬT — nâng shader composite (kiểu Water2 nhưng trên metaball)
+--------------------------------------------------------------------------------
+  Sửa fragmentShader của compMat (trong buildWaterFX). Thêm uniforms: uTime (giây), uScene (texture
+  ảnh scene đã render), tNormal (1 normal-map cuộn, hoặc sinh procedural).
+  Các lớp cần thêm:
+    1) NORMAL CHẢY (flow): lấy normal từ gradient trường A (đang có) RỒI cộng 1 normal-map CUỘN theo
+       thời gian (uv*scale - uTime*flowDir). Hướng flow ~ hướng vận tốc trung bình (xuống dưới ở phễu,
+       theo tiếp tuyến ở belt). -> mặt nước có gợn ĐỘNG.
+    2) KHÚC XẠ NỀN (refraction): TRƯỚC khi vẽ nước, CHỤP scene vào 1 texture (uScene = render scene vào
+       1 RT, hoặc copy framebuffer). Khi vẽ nước, sample uScene tại uv + offset*normal.xy*refrStrength
+       -> nước "bẻ cong" hình nền phía sau (tranh/belt/lọ). Tinh tế nhưng làm nên "chất nước".
+       (Đây là cách NHẸ thay cho Reflector/Refractor của Water2.)
+    3) FRESNEL: rìa nước sáng/đục hơn tâm: fres = pow(1 - n.z, 3); trộn thêm màu trắng/nhạt theo fres.
+    4) SPECULAR + môi trường: giữ specular hiện có; (tuỳ chọn) thêm 1 màu môi trường nhạt (giả sky) theo
+       n để mặt nước có ánh.
+    5) ĐỘ TRONG theo BỀ DÀY: dùng A (mật độ) như "bề dày" -> A lớn (giữa khối) đậm màu hơn, A nhỏ (rìa)
+       trong hơn: alpha & độ bão hoà màu theo smoothstep(A). -> khối nước dày trông "đặc", rìa "loãng".
+  LƯU Ý mã hoá màu: outputEncoding=sRGB. base color đang là sRGB byte; nếu thêm refraction từ uScene
+  (đã sRGB) thì trộn ở sRGB là chấp nhận được. Nếu thấy lệch màu, cân nhắc convert linear<->sRGB.
+  CHI PHÍ: thêm 1 pass chụp scene (nếu làm refraction). Nhẹ. uScene có thể là chính scene render sẵn
+  (vẽ scene vào RT trước, blit ra màn, rồi dùng RT làm uScene cho lớp nước) -> 1 lần render scene.
+
+  *** VỀ THREE.Water2 cho pha rơi/belt: KHÔNG dùng — Water2 là MẶT PHẲNG, không ôm theo hình khối
+      nước đang chảy. Toàn bộ "chất nước" ở (B) là MÔ PHỎNG LẠI cảm giác Water2 NGAY TRONG shader
+      metaball, nên hình vẫn do nước thật (droplet) quyết định. ***
+
+--------------------------------------------------------------------------------
+4. (C) LỌ DÂNG NƯỚC — biến J.fillMesh thành mặt nước
+--------------------------------------------------------------------------------
+  Hiện trạng (makeJarSlot): mỗi lọ có J.fillMesh = 1 BoxGeometry(1.18,1,0.78), material standard màu
+  lọ, scale.y dâng từ ~0 tới đầy theo J.filled/J.capacity (cập nhật trong vòng update lọ). deliverToJar
+  tăng J.filled. -> CƠ CHẾ DÂNG ĐÃ CÓ; Pha 3 chỉ làm cho nó TRÔNG LÀ NƯỚC:
+    OPTION 1 (nhẹ): đổi fillMat sang material nước: trong suốt nhẹ, roughness thấp, thêm 1 mặt trên
+      (top) có gợn động (vertex wobble theo uTime) + fresnel. Giữ box dâng.
+    OPTION 2 (đẹp, dùng Water2 ĐÚNG CHỖ): mặt TRÊN của nước trong lọ là 1 mesh phẳng nhỏ dùng
+      THREE.Water2 (flow nhẹ, phản chiếu/khúc xạ) đặt tại cao độ = mức nước hiện tại; thân nước là 1
+      khối trong suốt màu lọ. Đây là nơi Water2 HỢP (mặt phẳng nằm ngang, gần như tĩnh).
+      - Cần nhúng (global r136): Water2.js + Reflector.js + Refractor.js (inline). Tốn 2 RT phản
+        chiếu/khúc xạ MỖI mặt nước -> với 4 lọ + queue có thể nặng; cân nhắc dùng CHUNG 1 Water2 hoặc
+        hạ độ phân giải RT, hoặc chỉ bật cho 4 lọ ACTIVE.
+    OPTION 3: khi cube/nước RỚT vào lọ (bc.drop kết thúc), tạo 1 "splash" nhỏ (vài droplet metaball
+      bắn lên) cho cảm giác RÓT. deliverToJar là nơi gắn hiệu ứng này.
+  Khuyến nghị: OPTION 1 trước (rẻ, chắc), OPTION 2 nếu muốn "wow" và máy đủ khoẻ.
+
+--------------------------------------------------------------------------------
+5. (D) (tuỳ chọn) MÁNG BELT NGẬP NƯỚC
+--------------------------------------------------------------------------------
+  Kết hợp Pha 2: nếu Pha 2 đã splat droplet belt vào metaball, lòng máng đã trông có nước. Pha 3 thêm:
+    - Mặt băng (buildBeltSurface, spec 5.6) đổi nền sẫm + bớt mũi tên -> như đáy máng ướt.
+    - (Tuỳ chọn) 1 dải Water2 phẳng ôm theo stadium làm "mặt nước nền" của máng, droplet màu chạy trên đó.
+      Đây là chỗ Water2 hợp (mặt phẳng oval). Nhưng đo FPS — Water2 + reflection trên oval không rẻ.
+
+--------------------------------------------------------------------------------
+6. THỨ TỰ ƯU TIÊN ĐỀ XUẤT (làm dần, mỗi bước nghiệm thu được)
+--------------------------------------------------------------------------------
+  1) (B) phần FRESNEL + độ-trong-theo-bề-dày + normal chảy procedural  (nâng chất nước nhiều, rẻ nhất).
+  2) (A) streak bằng instanced quad                                     (ra "dòng chảy" rõ).
+  3) (B) refraction nền (chụp scene 1 lần)                              (chất nước thật sự).
+  4) (C) lọ dâng nước OPTION 1                                          (khép vòng cảm giác).
+  5) (C OPTION 2 / D) Water2 cho lọ/belt nếu còn ngân sách hiệu năng.
+
+--------------------------------------------------------------------------------
+7. HIỆU NĂNG & CẠM BẪY
+--------------------------------------------------------------------------------
+  - Mỗi pass thêm (chụp scene/refraction, Water2 RT) đều tốn. Đo FPS sau mỗi bước; mục tiêu giữ 60fps
+    desktop. Nếu tụt: giảm độ phân giải RT nước (nửa res rồi upscale — metaball chịu được mờ), giảm
+    số droplet (CFG.water.parts / K_BELT), tắt refraction trên máy yếu.
+  - HalfFloat RT cần EXT_color_buffer_half_float (desktop OK). uScene RT có thể UnsignedByte.
+  - GIỮ logic: Pha 3 KHÔNG đụng đếm đơn vị/cổng/thắng. Chỉ shader + mesh hiển thị.
+  - sRGB/linear: dễ lệch màu khi trộn refraction; kiểm bằng mắt, convert nếu cần.
+  - PHẢI MỞ TRÌNH DUYỆT XEM THẬT để chỉnh (WebGL không chụp được trong môi trường agent). Mở
+    _Game/Jelly_Drop_3D.html, bấm cụm màu; phím ←/→ đổi màn để thử nhiều palette.
+
+--------------------------------------------------------------------------------
+8. NGHIỆM THU PHA 3
+--------------------------------------------------------------------------------
+  [ ] Mặt nước có GỢN ĐỘNG + rìa fresnel + (tuỳ chọn) khúc xạ nền -> trông như nước thật, không phẳng lì.
+  [ ] Droplet đang chảy kéo thành VỆT theo hướng đi (streak), lắng lại thì tròn.
+  [ ] Lọ DÂNG MỰC NƯỚC trông là nước (gợn/khúc xạ), có splash nhỏ khi rót.
+  [ ] Màu đúng (không lệch sRGB), khác màu không trộn.
+  [ ] 60fps desktop ở mật độ nước cao; có nút/tham số hạ chất lượng nếu máy yếu.
+
+================================================================================
+ HẾT PHA 3. Tóm tắt: nâng SHADER metaball (fresnel + độ-trong-theo-bề-dày + normal chảy + refraction)
+ để ra "chất nước thật"; streak bằng instanced quad cho dòng chảy; lọ dâng nước (J.fillMesh) thành
+ mặt nước, Water2 chỉ dùng ở MẶT PHẲNG (lọ/belt). Không đụng logic đếm/thắng.
+================================================================================

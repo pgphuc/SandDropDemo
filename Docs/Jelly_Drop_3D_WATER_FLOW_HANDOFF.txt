@@ -5,6 +5,33 @@
  Đặc tả gốc của game: Docs/Jelly_Drop_3D_MECHANIC_SPEC.txt  (đọc mục 4.1, 4.4–4.8 trước)
 ================================================================================
 
+********************************************************************************
+ CẬP NHẬT 2026-06-29 (c): TINH CHỈNH THEO YÊU CẦU NGƯỜI CHƠI (trong _Game/Jelly_Drop_3D.html)
+   1) HẠT TO HƠN: CFG.water.meta 2.4 -> 3.2 (splat = PART_R*meta) -> metaball nhỏ to & rõ hơn.
+   2) LĂN VỀ KẼ HỞ: thêm CFG.water.drain (=8) + hàm terrainBlocked() + "gap-seek bias" trong
+      stepWater: nếu hạt đang đậu TRÊN 1 ô tranh còn lại thì đẩy ngang về phía OPEN (hoặc về
+      họng phễu nếu hai bên đều kẹt) -> hạt trượt khỏi gờ vào kẽ hở thay vì kẹt trên nóc.
+   3) MÀU KHỚP CUBE: compMat (raw ShaderMaterial) KHÔNG đi qua renderer.outputEncoding=sRGB như
+      jelly cube -> trước đây nước tối/xỉn hơn cube cùng màu. Đã thêm sRGB-encode ở cuối fragment
+      + giảm dim (diff 0.92+0.08) + giảm spec (0.55->0.32) cho khớp màu palette.
+   4) ĐÁY KHÔNG HÒA: CFG.water.threshold 0.95 -> 0.82 (kèm meta to hơn) -> các hạt nằm sát nhau
+      ở sàn feed GỘP thành 1 khối thay vì cách nhau kẽ nhỏ.
+   GHI CHÚ: O(n^2)? KHÔNG — đã có spatial hash. Vẫn cần MỞ TRÌNH DUYỆT xem & dò lại tham số.
+********************************************************************************
+
+********************************************************************************
+ CẬP NHẬT 2026-06-29 (b): "KIỂU A" ĐÃ ĐƯỢC IMPLEMENT TRONG _Game/Jelly_Drop_3D.html
+   - Mỗi ô khi thả giờ TÁCH thành CFG.water.parts droplet (mặc định 5), chạy SPH ĐỘC LẬP
+     (có spatial hash) -> chảy thành dòng, KHÔNG còn 1 hạt/ô.
+   - Cấu trúc: fallers = danh sách UNIT (1 ô = 1 unit, giữ lọ/thắng/feed); wparts = droplet;
+     mỗi unit.parts = droplet của nó; unit.(x,y) = trọng tâm droplet. Feed 1 unit -> xoá
+     droplet của nó khỏi wparts (tryFeedBelt). Render metaball splat theo wparts.
+   - CÒN LẠI để làm cho "đẹp như nước thật" (mục 4 bước 3): RENDER VỆT/STREAK (kéo dài splat
+     theo vận tốc -> cần đổi point-sprite sang quad/instanced xoay-giãn theo vận tốc) và/hoặc
+     nâng shader composite (flow-normal + khúc xạ nền + fresnel). Và PHA 2 (belt + lọ thành nước).
+   - Mục 2/3 bên dưới mô tả bản 1-hạt/ô CŨ; đọc để hiểu lịch sử, nhưng code hiện tại là đa hạt.
+********************************************************************************
+
 --------------------------------------------------------------------------------
 0. MỤC TIÊU NGƯỜI CHƠI (nguyên văn ý muốn)
 --------------------------------------------------------------------------------

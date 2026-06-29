@@ -448,6 +448,92 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
   Key localStorage: 'jelly_level' (màn), 'jelly_level_img_<idx>' (bake), 'jelly_level_imgsrc_<idx>' (ảnh gốc),
   'jelly_mode' (kiểu thả).
 
+4.10 LỚP NƯỚC (WATER RENDER) — Pha 1 (rơi) + Pha 2 (băng chuyền)  [cập nhật 2026-06-29]
+  NGUYÊN TẮC BẤT BIẾN: nước CHỈ là HIỂN THỊ. Cách ĐẾM không đổi: 1 ô = 1 đơn vị; lọ đầy theo
+  số đơn vị (deliverToJar: J.filled++), thắng khi deliveredUnits>=totalUnits (4.7/4.8 nguyên vẹn).
+  Droplet KHÔNG BAO GIỜ được tham gia đếm.
+
+  Mô hình dữ liệu (tách ĐƠN VỊ khỏi HẠT):
+    fallers = danh sách ĐƠN VỊ rơi (1 ô = 1 unit; lọ/thắng/feed/heap đếm theo đây — KHÔNG đổi).
+    wparts  = danh sách HẠT nước (droplet) của pha rơi: {x,y,vx,vy,z,r,color,unit}.
+    unit.parts = droplet thuộc đơn vị đó; unit.(x,y) = TRỌNG TÂM droplet (tryFeedBelt/heapCount dùng).
+    beltCubes = danh sách ĐƠN VỊ trên băng chuyền (4.6 nguyên vẹn: th,rho,thFlow,drop,pack,gate...).
+
+  PHA 1 — pha RƠI là nước (đã có trước):
+    - startFallCluster: mỗi ô tách thành CFG.water.parts droplet (mặc định 14, r=FALL_R/sqrt(parts)).
+    - stepWater(dt): SPH-lite 2D trong mặt phẳng tranh XY (áp suất push + cohesion + visc + drain),
+      spatial-hash theo h; projectBoundary đẩy hạt ra khỏi terrain/tường phễu/sàn. KHÔNG xoay.
+    - tryFeedBelt: tuồn 1 ĐƠN VỊ nước lên belt (enterBeltUnit) -> đồng thời XOÁ droplet của unit đó
+      khỏi wparts. (Đây là "đường nối" nước->đơn-vị-belt.)
+    - Mesh cầu của faller ẨN (visible=false); hình do metaball lo.
+
+  PHA 2 — băng chuyền NHÌN LÀ NƯỚC (HƯỚNG A: GIỮ logic belt, CHỈ ĐỔI RENDER):
+    - Logic belt KHÔNG ĐỘNG: beltCubes vẫn chạy th/rho, packBeltCubes, crossed/slotGateT, bc.drop,
+      deliverToJar y hệt 4.6/4.7 -> độ khó/cổng/đếm KHÔNG đổi.
+    - Cube mesh trên belt ẨN: enterBeltUnit set m.visible=false (giữ pool làm TOKEN + vật mang vị trí;
+      bc.mesh.position vẫn được belt/drop loop cập nhật mỗi frame, dùng làm TÂM splat). Không xoá pool.
+    - Mỗi đơn vị belt splat CFG.water.beltParts droplet (mặc định 2) quanh bc.mesh.position vào CÙNG
+      trường metaball với pha rơi. Offset nằm trong mặt phẳng belt (beltAxA/beltAxB), xoáy theo bc.wob
+      -> pack dày GỘP thành 1 dải nước cùng màu chảy quanh máng. Dùng bc.mesh.position nên ĐÚNG cho cả
+      lúc chạy máng LẪN lúc bc.drop (cung rớt vào lọ) -> trông như RÓT nước; deliverToJar vẫn 1 lần/đơn vị.
+
+  RENDER metaball (renderWaterFX, screen-space, gọi trong animate SAU renderer.render):
+    - 1 trường mật độ (WebGLRenderTarget HalfFloat): mỗi droplet splat 1 đốm radial (color*w, w) ADDITIVE.
+    - Pha rơi (wparts, asize=1) VÀ belt (beltParts droplet/đơn vị, asize=beltSize) splat CHUNG 1 lượt,
+      cùng camera -> nước LIỀN MẠCH từ phễu xuống belt vào lọ, đúng phối cảnh.
+    - SIZE THEO ĐIỂM: thêm attribute 'asize' (gl_PointSize=uSize*asize/dist). Droplet belt to hơn
+      (beltSize≈2.3) vì 1 đơn vị belt ~ cỡ cube; droplet rơi để asize=1.
+    - maxPts TỰ TÍNH: maxBeltCubes*beltParts + maxHeapCubes*parts + 512 (Pha 2 splat chung trường nên
+      phải đủ cho CẢ HAI). Guard n+K<=cap khi đẩy điểm belt.
+    - 1 pass fullscreen dựng mặt nước nơi mật độ > CFG.water.threshold: màu = trung-bình-trọng-số,
+      shading normal giả từ gradient, mã hoá sRGB + bright cho khớp độ sáng cube.
+
+  CFG.water (khoá Pha 2 mới): beltParts (droplet/đơn vị belt, 1–3), beltSpread (offset ngang, đơn vị
+  belt-local ≈ CH.Whalf 0.23), beltSize (bội splat so với droplet rơi). Các khoá Pha 1: parts,h,push,
+  cohesion,visc,rest,drain,sub,meta,threshold,bright (xem mục 5 + comment CFG).
+  (Pha 3 KẾ HOẠCH sẽ thêm: streak = độ giãn vệt theo vận tốc, + uniform refraction/flow; xem 4.11.)
+
+  HIỆU NĂNG / CẠM BẪY:
+    - Belt dày (tới ~maxBeltCubes=2416 đơn vị) * beltParts -> NHIỀU điểm. Giảm beltParts hoặc
+      maxBeltCubes nếu tụt FPS. (updateBeltSpin vẫn chạy trên mesh ẨN -> phí nhẹ, có thể bỏ qua sau.)
+    - PHẢI MỞ TRÌNH DUYỆT XEM THẬT để tinh (WebGL không chụp được trong môi trường agent).
+    - Test đếm: dọn 1 màn nhỏ -> phải WIN (deliveredUnits>=totalUnits) y như bản cube.
+
+4.11 LỚP NƯỚC — Pha 3 (ĐÁNH BÓNG: render đẹp như nước thật)  [KẾ HOẠCH — chưa code, xem handoff]
+  Trạng thái (2026-06-29): MỚI LÀ KẾ HOẠCH, CHƯA hiện thực trong _Game/Jelly_Drop_3D.html.
+  Hiện code chỉ tới Pha 1+2: metaball composite còn normal+highlight GIẢ (không fresnel/khúc xạ/flow),
+  droplet là point sprite VUÔNG isotropic (không kéo vệt), J.fillMesh vẫn là 1 BoxGeometry
+  MeshStandardMaterial dâng theo scale.y (chưa thành mặt nước). Đặc tả đầy đủ + thứ tự làm:
+  Docs/Jelly_Drop_3D_WATER_PHA3_HANDOFF.txt (đọc kèm Pha 1: WATER_FLOW_HANDOFF, Pha 2: WATER_PHA2_HANDOFF).
+
+  NGUYÊN TẮC BẤT BIẾN (như 4.10): Pha 3 THUẦN RENDER — KHÔNG đụng đếm đơn vị/cổng/thắng (4.7/4.8).
+  Chỉ sửa 2 shader (point sprite + composite trong buildWaterFX) và J.fillMesh.
+
+  4 NHÓM VIỆC (làm dần, độc lập):
+    (A) VỆT/STREAK — droplet đang chảy kéo dài theo vận tốc -> ra "dòng" thay vì chuỗi tròn.
+        Cách khuyến nghị: thay point sprite bằng INSTANCED QUAD, mỗi droplet = 1 quad xoay theo
+        velocity + GIÃN trục dọc theo |v| trong không gian màn hình; fragment giữ radial falloff
+        -> trường mật độ thuôn -> metaball ra vệt. Thêm CFG.water.streak (0 = tròn như cũ).
+    (B) MẶT NƯỚC THẬT — nâng fragmentShader của compMat: (1) NORMAL CHẢY = gradient trường A +
+        normal-map cuộn theo uTime; (2) KHÚC XẠ NỀN = chụp scene vào uScene 1 RT rồi sample lệch
+        theo normal.xy*refrStrength (cách nhẹ thay Reflector/Refractor); (3) FRESNEL rìa sáng;
+        (4) SPECULAR + môi trường nhạt; (5) ĐỘ TRONG theo BỀ DÀY (dùng A như độ dày: giữa đặc, rìa
+        loãng). Thêm uniforms: uTime, uScene, tNormal. *** KHÔNG dùng THREE.Water2 cho pha rơi/belt
+        vì Water2 là MẶT PHẲNG, không ôm hình khối nước chảy — "chất nước" mô phỏng ngay trong shader
+        metaball. *** Lưu ý sRGB/linear khi trộn refraction (uScene đã sRGB), convert nếu lệch màu.
+    (C) LỌ DÂNG NƯỚC — biến J.fillMesh thành mặt nước (cơ chế dâng theo J.filled/J.capacity ĐÃ CÓ,
+        chỉ làm cho TRÔNG là nước): OPT1 (nhẹ) material trong + mặt trên gợn động + fresnel, giữ box;
+        OPT2 (đẹp) THREE.Water2 cho MẶT TRÊN phẳng nằm ngang (Water2 hợp chỗ này — tốn 2 RT/mặt, cân
+        nhắc dùng chung / chỉ bật 4 lọ active); OPT3 splash nhỏ khi deliverToJar (cảm giác rót).
+    (D) (tuỳ chọn) MÁNG BELT NGẬP NƯỚC — đổi nền mặt băng sẫm + (tuỳ chọn) 1 dải Water2 phẳng ôm
+        stadium làm mặt nước nền của máng.
+
+  THỨ TỰ ƯU TIÊN (mỗi bước nghiệm thu được): (B) fresnel+độ-trong-theo-bề-dày+normal chảy procedural
+    (rẻ nhất, nâng chất nước nhiều) -> (A) streak instanced quad -> (B) refraction (chụp scene 1 lần)
+    -> (C) lọ dâng nước OPT1 -> (C OPT2 / D) Water2 nếu còn ngân sách FPS.
+  HIỆU NĂNG: mỗi pass thêm (chụp scene, Water2 RT) đều tốn; đo FPS sau mỗi bước (mục tiêu 60fps
+    desktop), hạ res RT nước / giảm droplet / tắt refraction nếu tụt. PHẢI MỞ TRÌNH DUYỆT XEM THẬT.
+
 --------------------------------------------------------------------------------
 5. THAM SỐ CẤU HÌNH (gom vào 1 object CFG đầu file để chỉnh độ khó/layout)
 --------------------------------------------------------------------------------

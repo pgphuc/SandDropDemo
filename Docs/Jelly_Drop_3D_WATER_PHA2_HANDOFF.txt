@@ -1,0 +1,124 @@
+================================================================================
+ JELLY DROP 3D — HAND-OFF PHA 2: "BĂNG CHUYỀN THÀNH NƯỚC"
+ Ngày tạo: 2026-06-29
+ File code canonical: _Game/Jelly_Drop_3D.html  (LUÔN sửa file này)
+ Đọc trước: Docs/Jelly_Drop_3D_MECHANIC_SPEC.txt (mục 4.5–4.7, 5.5, 5.6)
+            Docs/Jelly_Drop_3D_WATER_FLOW_HANDOFF.txt (Pha 1 — pha rơi đã thành nước đa hạt)
+================================================================================
+
+--------------------------------------------------------------------------------
+0. MỤC TIÊU PHA 2
+--------------------------------------------------------------------------------
+  Hiện tại (sau Pha 1): pha RƠI là nước (droplet SPH + metaball), nhưng khi nước cán sàn
+  phễu thì BIẾN LẠI thành JELLY CUBE để chạy băng chuyền (beltCubes) rồi RỚT vào lọ. Đó là
+  "đường nối" tạm của Pha 1.
+  Pha 2: làm cho thứ CHẠY VÒNG trên băng chuyền (và RỚT vào lọ) TRÔNG LÀ NƯỚC thay vì cube —
+  luồng nước cùng màu chảy quanh máng oval, gặp cổng lọ cùng màu thì RÓT xuống như dòng nước.
+
+  *** NGUYÊN TẮC BẤT BIẾN (đừng phá): GIỮ "1 đơn vị = 1 cube-logic" cho LỌ và THẮNG. Lọ đầy
+      khi đếm đủ N đơn vị (deliverToJar: J.filled++), thắng khi deliveredUnits>=totalUnits.
+      Pha 2 chỉ đổi HIỂN THỊ + cảm giác, KHÔNG đổi cách đếm. (Giống Pha 1 giữ "1 ô = 1 unit".) ***
+
+--------------------------------------------------------------------------------
+1. CƠ CHẾ BELT HIỆN TẠI (đọc để biết sẽ đụng vào đâu)
+--------------------------------------------------------------------------------
+  Cấu trúc & hàm (tên hàm bền hơn số dòng):
+    let beltCubes=[];   // mỗi phần tử = 1 ĐƠN VỊ trên belt:
+                        // {mesh,th,rho,color,target,drop,wob,prevTh,thFlow,_a,_b,spinRate,...}
+                        //   th  = góc quanh vòng (0..2π) — vị trí THẬT (đã bị packBeltCubes động vào)
+                        //   rho = vị trí NGANG 0..1 giữa tường trong (0) và ngoài (1)
+                        //   thFlow = góc băng-cuốn RIÊNG (chỉ +omega*dt, dùng test cổng — xem spec 4.6)
+                        //   _a,_b = toạ độ phẳng (local belt) suy từ (th,rho) qua setAB/stadiumAt
+                        //   drop = null hoặc {t,jar,from,to} khi đang RỚT vào lọ
+    beltPool/getBeltCube/releaseBeltCube : pool mesh CUBE (jellyGeo) — sẽ thay/ẩn ở Pha 2.
+    enterBeltUnit(color,target): tuồn 1 đơn vị lên belt ở BELT_ENTRY_TH (π/2), chọn rho trống.
+    tryFeedBelt(): (Pha 1 đã sửa) feed 1 UNIT nước -> gọi enterBeltUnit -> sinh 1 belt unit;
+                   ĐỒNG THỜI xoá droplet của unit đó khỏi wparts. (Đây là chỗ "nước -> cube".)
+    packBeltCubes(): va chạm cube-cube (relaxation theo th,rho) + clamp rho = tường máng.
+    beltWorld(th,rho,lift,out): (th,rho) -> toạ độ THẾ GIỚI trên đường tâm stadium (xem spec 5.5).
+    updateBeltSpin(bc,dt,omega): hướng/lắc cube trên belt (KHÔNG tumble).
+    crossed()/slotGateT(): test cắt cổng lọ trên thFlow; commit bc.drop khi qua cổng lọ cùng màu.
+    bc.drop arc (trong vòng update belt): bay cung ~0.36s từ mép belt xuống miệng lọ -> deliverToJar.
+    measureBeltChannel()/CH/stadiumAt(): hình học máng (đo từ mesh, KHÔNG hard-code).
+    buildBeltSurface()/beltSurfaceUpdate(): MẶT BĂNG vẽ bằng CanvasTexture (mũi tên chạy) — spec 5.6.
+
+--------------------------------------------------------------------------------
+2. HAI HƯỚNG LÀM PHA 2 (chọn 1; khuyến nghị A)
+--------------------------------------------------------------------------------
+  HƯỚNG A — GIỮ "đơn vị belt", CHỈ ĐỔI RENDER sang nước (ÍT RỦI RO, khuyến nghị):
+    - Giữ NGUYÊN toàn bộ logic belt: beltCubes vẫn là đơn vị chạy (th,rho), packBeltCubes,
+      crossed, bc.drop, deliverToJar... KHÔNG ĐỘNG. -> lọ/thắng/cổng/độ khó y hệt.
+    - Chỉ thay phần VẼ: mỗi belt unit, thay vì 1 cube mesh, sinh ra (hoặc gắn) 1 cụm K droplet
+      NHỎ (giống Pha 1) bám quanh vị trí beltWorld(th,rho) của nó; cho các droplet này vào CÙNG
+      hệ metaball (wparts) để chúng GỘP với hàng xóm cùng màu -> nhìn thành LUỒNG NƯỚC liền chạy
+      quanh máng. Cube mesh pool để ẩn (m.visible=false), như Pha 1 đã làm với faller.
+      * Cách gắn droplet cho belt unit: thêm bc.parts = mảng droplet; mỗi frame, sau khi tính
+        beltWorld(bc.th,bc.rho) = tâm world của unit, ĐẶT droplet quanh tâm đó (offset cố định
+        nhỏ + lắc theo wob) RỒI đẩy vào buffer metaball. Belt unit droplet KHÔNG cần chạy SPH
+        (chúng theo belt), chỉ là điểm splat -> rẻ. (Khác Pha 1: faller droplet CÓ chạy SPH.)
+      * MỞ RỘNG renderWaterFX: hiện nó splat `wparts` (pha rơi). Cho nó splat THÊM droplet của
+        beltCubes (và droplet bc.drop đang rớt). Gợi ý: gom 1 mảng tạm mỗi frame
+        [ ...wparts, ...beltDroplets, ...dropDroplets ] rồi splat 1 lượt. maxPts phải đủ lớn
+        (belt có thể tới ~2416 đơn vị * vài droplet -> NHIỀU; cân nhắc 1–2 droplet/đơn vị trên
+        belt cho nhẹ, vì belt xếp dày nên vẫn liền). Cảnh báo hiệu năng: xem mục 4.
+    - bc.drop (rớt vào lọ): cho droplet bay theo cung -> trông như RÓT nước. deliverToJar không đổi.
+    => Kết quả: belt nhìn là nước chảy, nhưng "xương" logic vẫn là đơn vị cube. AN TOÀN nhất.
+
+  HƯỚNG B — FLUID THẬT TRÊN BELT (đẹp hơn, NẶNG + rủi ro cao):
+    - Bỏ packBeltCubes cube-cube; chạy SPH thật trong toạ độ máng (th,rho) cho HÀNG NGHÌN droplet
+      cuốn quanh vòng (omega), va chạm bằng áp suất, clamp rho = tường. Gặp cổng lọ cùng màu thì
+      RÓT ra theo thể tích.
+    - PHẢI dựng lại "đếm đơn vị": vì giờ là nước liên tục, cần bộ đếm thể tích -> 1 đơn vị = 1
+      lượng nước cố định; lọ đầy theo thể tích; thắng theo thể tích. = viết lại deliverToJar +
+      checkWin + cổng. RỦI RO cao, dễ vỡ cân bằng game. CHỈ chọn nếu thực sự cần fluid thật ở belt.
+    - Hiệu năng: SPH ~1000–3000 droplet quanh máng mỗi frame + spatial hash (theo th hoặc lưới
+      local). Nặng hơn Pha 1 nhiều. Đo FPS sớm.
+
+--------------------------------------------------------------------------------
+3. CÁC BƯỚC ĐỀ XUẤT (HƯỚNG A)
+--------------------------------------------------------------------------------
+  B1. Ẩn cube belt: trong enterBeltUnit, set m.visible=false (giữ pool làm token, như Pha 1).
+      Hoặc bỏ hẳn mesh cube belt, dùng pool khác cho droplet. Đơn giản nhất: giữ mesh, ẩn.
+  B2. Gắn droplet cho mỗi belt unit: khi push vào beltCubes, thêm bc.parts = K_BELT điểm offset
+      (K_BELT nhỏ, 1–3) với màu = PALETTE[color]. (Có thể KHÔNG cần object riêng, chỉ cần lúc
+      render tạo điểm tại beltWorld + offset.)
+  B3. Mỗi frame (sau khi belt đã cập nhật th,rho,drop): với mỗi bc, tính world = beltWorld(bc.th,
+      bc.rho); đẩy K_BELT điểm (world + offset xoay theo wob) + màu vào buffer metaball. Với bc.drop,
+      tính vị trí trên cung rồi đẩy điểm tương tự.
+  B4. renderWaterFX splat CẢ pha rơi (wparts) LẪN belt/drop droplet trong 1 lượt -> nước liền mạch
+      từ phễu xuống belt vào lọ. (Cùng 1 RT, 1 composite.)
+  B5. Tinh metaball cho belt: belt nhìn TOP-DOWN, droplet dày -> dễ thành 1 dải nước. Có thể cần
+      threshold riêng cho vùng belt (hoặc chấp nhận 1 ngưỡng chung). Mũi tên mặt băng (buildBeltSurface)
+      vẫn chạy DƯỚI lớp nước -> nhìn như đáy máng có nước trôi. (Cân nhắc giảm độ rõ mũi tên.)
+  B6. Mặt băng (belt surface, spec 5.6): có thể GIỮ (đáy máng) hoặc thay bằng màu nước. Nếu muốn
+      "lòng máng ngập nước", đổi nền '#647689' sẫm hơn + để metaball nước phủ lên.
+
+--------------------------------------------------------------------------------
+4. HIỆU NĂNG & CẠM BẪY
+--------------------------------------------------------------------------------
+  - SỐ ĐIỂM METABALL: maxBeltCubes ≈ 2416. Nếu mỗi đơn vị belt splat K_BELT=2 -> ~4800 điểm CHỈ
+    riêng belt, cộng pha rơi. Phải NÂNG maxPts trong buildWaterFX (hiện 6000) hoặc giảm K_BELT=1,
+    hoặc chỉ splat các đơn vị belt TRONG TẦM NHÌN. Đo FPS; nếu tụt, giảm maxBeltCubes hoặc K_BELT.
+  - Belt nhìn gần TOP-DOWN, z gần phẳng -> metaball màn-hình (vốn cho mặt phẳng tranh) vẫn hợp.
+    Nhưng droplet belt và droplet pha rơi ở 2 mặt phẳng z khác nhau; splat bằng cùng camera nên
+    tự đúng phối cảnh. OK.
+  - GIỮ "đơn vị = đếm": tuyệt đối KHÔNG để số droplet ảnh hưởng deliverToJar/checkWin. Droplet chỉ
+    là VẼ. Test: dọn 1 màn nhỏ -> phải WIN (deliveredUnits>=totalUnits) như cũ.
+  - bc.drop vẫn phải gọi deliverToJar đúng 1 lần/đơn vị (đang đúng). Đừng nhân đôi khi đổi render.
+  - jellyGeo: TRANH vẫn dùng. Đừng xoá. Cube belt mesh ẩn chứ không xoá pool (tránh lỗi null).
+  - PHẢI MỞ TRÌNH DUYỆT XEM THẬT (WebGL không chụp được trong môi trường agent).
+
+--------------------------------------------------------------------------------
+5. NGHIỆM THU PHA 2
+--------------------------------------------------------------------------------
+  [ ] Trên belt nhìn là LUỒNG NƯỚC cùng màu chảy quanh máng, KHÔNG còn thấy cube vuông.
+  [ ] Nước khác màu chạy cạnh nhau KHÔNG trộn màu (mỗi droplet giữ màu của đơn vị).
+  [ ] Gặp cổng lọ cùng màu -> RÓT xuống lọ như dòng nước (cung ~0.36s), lọ đếm đúng.
+  [ ] Lọ đầy -> nắp + ✓; thắng khi dọn sạch. KHÔNG deadlock, KHÔNG thắng sớm/muộn.
+  [ ] FPS ổn ở mật độ belt cao (đã chỉnh K_BELT/maxPts/maxBeltCubes nếu cần).
+
+================================================================================
+ HẾT PHA 2. Tóm tắt: GIỮ logic belt (đơn vị, pack, cổng, deliverToJar) — chỉ thay RENDER cube
+ thành droplet metaball cùng hệ với pha rơi -> nước chảy liền từ phễu xuống belt vào lọ. Đừng
+ để droplet đụng vào cách ĐẾM đơn vị (lọ/thắng).
+================================================================================
