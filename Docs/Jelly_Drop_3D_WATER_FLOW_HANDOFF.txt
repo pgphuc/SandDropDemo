@@ -1,0 +1,173 @@
+================================================================================
+ JELLY DROP 3D — HAND-OFF: "CUBE HÓA NƯỚC CHẢY XUỐNG" (cho session sau)
+ Ngày tạo: 2026-06-29
+ File code canonical: _Game/Jelly_Drop_3D.html  (LUÔN sửa file này, đừng rebuild từ nguồn cũ)
+ Đặc tả gốc của game: Docs/Jelly_Drop_3D_MECHANIC_SPEC.txt  (đọc mục 4.1, 4.4–4.8 trước)
+================================================================================
+
+--------------------------------------------------------------------------------
+0. MỤC TIÊU NGƯỜI CHƠI (nguyên văn ý muốn)
+--------------------------------------------------------------------------------
+  - Hiện trạng game gốc: bấm 1 cụm màu -> mỗi ô sinh 1 JELLY CUBE rơi xuống.
+  - Yêu cầu: "mỗi khối jelly biến thành NƯỚC và CHẢY XUỐNG; luồng quay vòng trên băng
+    chuyền cũng là nước thay vì jelly cube."
+  - Tinh chỉnh thêm (quan trọng, lý do tạo file này): người chơi muốn "TỪNG CUBE khi
+    chuyển thành nước thì CHẢY XUỐNG (trickle/thành dòng), KHÔNG phải vón thành 1 KHỐI
+    METABALL đặc như bản hiện tại."
+  - Người chơi có hỏi: dùng THREE.Water2 thay metaball được không?
+
+--------------------------------------------------------------------------------
+1. TRẢ LỜI DỨT KHOÁT: WATER2 KHÔNG GIẢI QUYẾT ĐƯỢC VIỆC NÀY
+--------------------------------------------------------------------------------
+  THREE.Water2 (examples objects/Water2.js) = shader MẶT NƯỚC PHẲNG đang chảy: 1 mesh
+  PHẲNG + flow-map cuộn normal để giả gợn sóng TRÊN BỀ MẶT, kèm Reflector + Refractor
+  (phản chiếu/khúc xạ). Đặc điểm & vì sao KHÔNG hợp:
+    - Nó là 1 MẶT PHẲNG CỐ ĐỊNH. Không di chuyển khối nước, không rơi theo trọng lực,
+      không đổi hình theo giọt. "Flow" của nó chỉ là sóng chạy trên mặt phẳng đứng yên.
+    - Việc "cube tan thành nước chảy xuống" là CHUYỂN ĐỘNG + ĐỔI HÌNH của khối lỏng ->
+      bắt buộc đến từ MÔ PHỎNG HẠT, không phải từ 1 shader bề mặt.
+    - Water2 chỉ đáng dùng ở chỗ nước là MẶT PHẲNG thật: Pha 2 (mặt băng chuyền = hồ
+      nước oval) hoặc lọ DÂNG mực nước. KHÔNG dùng cho pha rơi.
+  => Bề mặt nước "đẹp như Water2" thì BÊ được (flow-normal + khúc xạ nền + fresnel) NHƯNG
+     phải áp lên SHAPE do hạt/metaball quyết định, KHÔNG phải thay metaball bằng Water2.
+
+--------------------------------------------------------------------------------
+2. HIỆN TRẠNG CODE (Pha 1 ĐÃ LÀM — bạn kế thừa cái này)
+--------------------------------------------------------------------------------
+  Đã thay PHA RƠI từ jelly cube sang NƯỚC (mô phỏng + render), GIỮ nguyên đếm đơn vị:
+  mỗi ô bị xóa vẫn là 1 "đơn vị" -> lọ/thắng/feed/belt KHÔNG đổi. Belt VẪN là cube
+  (Pha 1 chưa đụng) -> có 1 "đường nối": nước chạm sàn phễu thì tuồn lên belt và BIẾN
+  LẠI thành cube. Đó là chủ ý của Pha 1; Pha 2 sẽ làm belt thành nước.
+
+  Các hàm/khối CHÍNH (tên hàm bền hơn số dòng; số dòng tại thời điểm viết, có thể trôi):
+    CFG.water (≈ dòng 4668): tham số nước. Các khóa:
+        h          interaction radius (world ~1.4 cell) — tầm hạt "thấy" nhau
+        push       độ cứng áp suất (đẩy nhau khi chồng)
+        cohesion   lực hút tầm trung = sức căng bề mặt (KÉO VÓN THÀNH KHỐI) <-- thủ phạm
+                   khiến nước "vón cục" thay vì chảy thành dòng; GIẢM để nước tơi/chảy hơn
+        visc       độ nhớt (mượt vận tốc)
+        rest       đàn hồi tường/sàn/terrain (gần 0 = nước)
+        sub        số substep vật lý mỗi frame
+        blob       (LEGACY render cầu, không dùng nữa)
+        meta       bán kính ảnh hưởng metaball = FALL_R*meta (to = gộp xa hơn)
+        threshold  ngưỡng mặt nước metaball (thấp = béo/gộp mạnh; cao = gọn/tách)
+    makeWaterMat() (≈4744) + waterGeo (tạo trong build, ≈ sau jellyGeo): vật liệu/cầu nước
+        (giờ ẩn — chỉ làm token cho pool feed).
+    Faller pool repoint sang water: makeFallerMat/initFallerPool/getFaller (≈5378+).
+        Mỗi faller = 1 HẠT FLUID (1 ô = 1 hạt). Mesh cầu ĐƯỢC ẨN (m.visible=false trong
+        startFallCluster ≈5362) vì render do metaball lo.
+    stepWater(dt) (≈5542): MÔ PHỎNG fluid SPH-lite 2D trong mặt phẳng tranh (XY).
+        Mỗi substep: trọng lực + lực cặp (áp suất đẩy + cohesion hút + nhớt) O(n^2) (n nhỏ
+        do maxHeapCubes cap ~50) -> tích phân Euler -> projectBoundary. KHÔNG xoay (nước
+        không tumble). Vận tốc bị kẹp + vị trí bị clamp cứng -> KHÔNG THỂ "nổ".
+        Cuối hàm: lưu f.z (đáp dần về z của belt khi rơi qua đáy tranh) cho metaball dùng;
+        ẩn mesh cầu.
+    projectBoundary(f) (≈5509): đẩy hạt ra khỏi MÔI TRƯỜNG — ô tranh còn lại (terrain,
+        circle-vs-AABB), tường phễu funnelHalfAt(y), sàn feedFloorY. Trích từ stepFaller cũ.
+    buildWaterFX/sizeWaterFX/renderWaterFX (≈5586/5631/5641): RENDER METABALL màn hình.
+        - Mỗi hạt "splat" 1 đốm radial (color*weight, weight) bằng THREE.Points + ShaderMaterial
+          ADDITIVE vào 1 WebGLRenderTarget HalfFloat (trường mật độ).
+        - 1 pass fullscreen dựng MẶT NƯỚC nơi mật độ > threshold: màu = trung bình-trọng-số,
+          shading bằng normal giả từ gradient trường (highlight + mép mềm).
+        - Gọi trong animate() NGAY SAU renderer.render(scene,camera) (≈ cuối file).
+        - sizeWaterFX() gọi trong resize() và cuối buildWaterFX() để khớp kích thước canvas.
+    stepFaller_LEGACY(f,dt) (≈5401): vật lý CUBE cũ — KHÔNG còn được gọi, giữ tham chiếu.
+    update(dt): pha rơi giờ chỉ gọi `stepWater(dt)` rồi `tryFeedBelt()` (≈ vùng 5660 cũ).
+
+  KIỂM: `node -e` parse 8 inline script = 0 lỗi cú pháp. Chưa kiểm hình ảnh (môi trường
+  không có browser headless cho WebGL). CẦN MỞ TRÌNH DUYỆT XEM THẬT để tinh tham số.
+
+--------------------------------------------------------------------------------
+3. VÌ SAO BẢN HIỆN TẠI TRÔNG "VÓN KHỐI" CHỨ CHƯA "CHẢY THÀNH DÒNG"
+--------------------------------------------------------------------------------
+  (a) ĐỘ PHÂN GIẢI HẠT QUÁ THÔ: 1 cube = ĐÚNG 1 hạt. Một dòng nước thật cần NHIỀU hạt
+      nhỏ để thấy nó "chảy/tách dòng". 1 hạt/ô -> nhìn như chuỗi bi/khối đặc.
+  (b) COHESION (sức căng bề mặt) đang ĐỦ MẠNH để vón cụm -> nước dính thành khối tròn thay
+      vì trào/trickle xuống.
+  (c) METABALL với meta/threshold hiện tại -> bề mặt "béo", càng nhấn mạnh cảm giác 1 khối.
+  (d) maxHeapCubes=50 -> tổng hạt ít -> không đủ "lượng nước" để thành dòng dài.
+
+--------------------------------------------------------------------------------
+4. CÁCH ĐÚNG ĐỂ ĐẠT "CUBE -> NƯỚC CHẢY XUỐNG" (đề xuất triển khai)
+--------------------------------------------------------------------------------
+  Ý tưởng cốt lõi: GIỮ metaball lo HÌNH; tăng ĐỘ PHÂN GIẢI HẠT + GIẢM cohesion để nước
+  TƠI và TRICKLE; (tùy chọn) nâng shader cho ra "mặt nước thật". KHÔNG dùng Water2 ở pha này.
+
+  BƯỚC 1 — NHIỀU HẠT MỖI CUBE (quan trọng nhất cho cảm giác "chảy"):
+    - Khi startFallCluster thả 1 ô: thay vì push 1 faller, push K hạt nhỏ (vd K=4..8) RẢI
+      quanh tâm ô, mỗi hạt r = FALL_R()/sqrt(K) (giữ ~thể tích). Vận tốc ban đầu lệch nhẹ
+      ngẫu nhiên + chút vy âm -> nước "bung" ra rồi chảy.
+    - TÁCH BIỆT ĐẾM ĐƠN VỊ KHỎI SỐ HẠT: lọ/thắng/heap/feed đang đếm theo `fallers.length`
+      và "1 ô = 1 unit". NẾU 1 ô = K hạt thì phải đổi cách đếm:
+        * Cách A (ít sửa nhất): GOM nhóm — mỗi "unit" là 1 object có mảng hạt con; heapCount,
+          tryFeedBelt, maxHeapCubes... đếm theo UNIT, không theo hạt. tryFeedBelt khi tuồn 1
+          unit lên belt thì thu hồi K hạt con.
+        * Cách B: giữ fallers = hạt, thêm biến đếm unit riêng (mỗi ô +1 unit khi thả, -1 khi
+          1 nhóm hạt của ô đó cán sàn & feed). Phức tạp ánh xạ hạt->ô.
+      => Khuyến nghị Cách A: thêm trường f.unitId hoặc cấu trúc unit{ parts:[...] }. Cẩn thận
+         giữ checkWin (deliveredUnits>=totalUnits) và maxHeapCubes Ý NGHĨA THEO UNIT.
+    - CHI PHÍ: stepWater là O(n^2). Với K=6 và heap ~50 unit -> ~300 hạt -> 90k cặp/substep
+      x sub(3) -> cần SPATIAL HASH (grid theo h) để về O(n·k). Spec mục 8 đã cảnh báo. Thêm
+      hash đơn giản: băm (floor(x/h),floor(y/h)) -> list; chỉ xét 9 ô lân cận.
+
+  BƯỚC 2 — TINH VẬT LÝ CHO "TRICKLE":
+    - GIẢM CFG.water.cohesion (vd 14 -> 3..6) để nước bớt vón, dễ tách dòng.
+    - Có thể thêm "stream bias": hạt trong tranh/phễu được kéo về TÂM-DƯỚI (họng phễu) nhẹ
+      để tạo cảm giác dồn dòng (giống SAND DRAIN cũ ở spec 4.4 nhưng cho fluid).
+    - Tăng maxHeapCubes (theo unit) hoặc cho mỗi click thả nhiều ô hơn -> đủ "lượng nước".
+
+  BƯỚC 3 — RENDER "DÒNG NƯỚC" RÕ HƠN (tùy chọn, trên nền metaball):
+    - Kéo dài đốm splat theo VẬN TỐC (anisotropic): điểm thành ELLIPSE dọc theo hướng đi ->
+      metaball cho ra VỆT/streak thay vì tròn -> đọc thành "đang chảy". (Cần đổi point sprite
+      sang quad/instanced để xoay-giãn theo vận tốc, vì gl_PointSize chỉ ra hình vuông.)
+    - Nâng shader composite cho giống mặt nước thật (đây là phần "trông như Water2"):
+        * normal chảy: cộng 1 normal-map cuộn theo thời gian (uTime) vào normal từ gradient.
+        * khúc xạ nền: chụp scene vào 1 texture, sample nền với offset theo normal -> nước
+          "bẻ" hình nền phía sau (tinh tế, không cần Reflector/Refractor nặng).
+        * fresnel: viền sáng theo |n.z|.
+      Tất cả nằm trong fragmentShader của compMat trong buildWaterFX — KHÔNG cần thêm thư viện.
+
+  (NẾU vẫn muốn thử Water2 cho RIÊNG Pha 2): nhúng examples (global r136) Water2.js +
+   Reflector.js + Refractor.js (inline base64/text), dựng 1 mesh phẳng oval khớp máng belt,
+   set flowDirection theo chiều băng. Nhưng đó là PHA 2, và là MẶT PHẲNG — không phải pha rơi.
+
+--------------------------------------------------------------------------------
+5. THAM SỐ TINH CHỈNH NHANH (CFG.water) — để dò "chảy đẹp"
+--------------------------------------------------------------------------------
+  - Vón cục, muốn TƠI/CHẢY hơn      -> giảm cohesion; giảm threshold-cao? KHÔNG, tăng nhẹ
+                                       threshold để mặt gọn; giảm meta để bớt béo.
+  - Lợn cợn từng giọt rời           -> tăng meta / giảm threshold (gộp nhiều hơn) HOẶC tăng K
+                                       (nhiều hạt hơn).
+  - Chảy quá nhanh/loãng            -> tăng visc.
+  - Nước nảy lung tung              -> giảm push, tăng visc, giảm rest.
+  - Thiếu "lượng nước"              -> tăng maxHeapCubes (theo UNIT) + K hạt/ô.
+
+--------------------------------------------------------------------------------
+6. CẠM BẪY / LƯU Ý
+--------------------------------------------------------------------------------
+  - GIỮ "1 ô = 1 UNIT" cho lọ/thắng: nếu đổi sang nhiều hạt/ô mà quên, checkWin
+    (deliveredUnits>=totalUnits) và sức chứa lọ (đếm cube) sẽ SAI -> game không thắng hoặc
+    thắng sớm. Test: dọn sạch 1 màn nhỏ phải ra overlay WIN.
+  - O(n^2): tăng số hạt PHẢI kèm spatial hash, không thì tụt FPS khi thả cụm lớn.
+  - HalfFloat render target: cần EXT_color_buffer_half_float (desktop Chrome/Edge OK). Nếu
+    máy yếu báo lỗi, fallback UnsignedByteType (màu tối ở vùng dày sẽ lệch nhẹ).
+  - Belt vẫn cube (Pha 1): nước -> cube ở sàn phễu. Bình thường ở Pha 1; Pha 2 mới sửa.
+  - stepFaller_LEGACY/ jellyGeo của TRANH: tranh (InstancedMesh) VẪN dùng jellyGeo — ĐỪNG
+    xóa jellyGeo. Chỉ pha RƠI mới là nước.
+  - PHẢI MỞ TRÌNH DUYỆT XEM THẬT để chỉnh (WebGL không chụp được trong môi trường agent).
+    Mở: _Game/Jelly_Drop_3D.html (double-click). Bấm cụm màu để thả; phím ←/→ đổi màn.
+
+--------------------------------------------------------------------------------
+7. NGHIỆM THU KHI ĐẠT
+--------------------------------------------------------------------------------
+  [ ] Bấm 1 cụm -> các ô tan thành NƯỚC TRICKLE/CHẢY THÀNH DÒNG xuống phễu (không vón 1 khối).
+  [ ] Nước cùng màu gặp nhau thì HÒA/gộp; khác màu không trộn màu (mỗi hạt giữ màu).
+  [ ] Nước dồn xuống họng phễu, tuồn lên belt (Pha 1: thành cube ở belt — chấp nhận).
+  [ ] Lọ/đếm/thắng vẫn đúng (1 ô = 1 unit). Dọn sạch màn -> WIN.
+  [ ] FPS ổn khi thả cụm lớn (đã có spatial hash nếu tăng số hạt).
+
+================================================================================
+ HẾT HAND-OFF. Tóm tắt: Water2 KHÔNG dùng cho pha rơi (nó là mặt phẳng). Giữ metaball lo
+ HÌNH, tăng số hạt/ô + giảm cohesion để CHẢY THÀNH DÒNG, (tùy chọn) nâng shader cho ra mặt
+ nước thật. Đếm "1 ô = 1 unit" phải giữ nguyên cho lọ/thắng.
+================================================================================
