@@ -18,9 +18,9 @@ Game web 3D (three.js) trộn 2 cơ chế mobile:
     1 ô lưới hiện tại) rồi RƠI xuống.
   - "Jelly": vật liệu rơi là KHỐI THẠCH mềm/bóng (jelly cube), không phải cát.
 
-  *** CẬP NHẬT 2026-06-29: BỨC TRANH giờ là 1 ẢNH PIXEL PHẲNG (texture 256×256 trên 1
-  PlaneGeometry), KHÔNG còn là lưới InstancedMesh các cube. Lý do/đặc tả chi tiết: xem 4.1.
-  Tranh chỉ là HÌNH; jelly cube chỉ XUẤT HIỆN khi người chơi bấm (cụm tách thành cube). ***
+  *** CẬP NHẬT 2026-06-29 (a): BỨC TRANH từng đổi sang 1 ẢNH PIXEL PHẲNG (texture 256×256
+  trên 1 PlaneGeometry). ĐÃ HOÀN NGUYÊN (2026-06-29 b) VỀ LƯỚI INSTANCEDMESH CÁC JELLY CUBE
+  theo yêu cầu người chơi: mỗi ô tranh là 1 khối jelly cube 3D thật. Lý do/đặc tả: xem 4.1. ***
 
 Luồng chính:
   CHẠM mảng màu  ->  khối thạch rơi xuống PHỄU  ->  trượt LÊN BĂNG CHUYỀN hình
@@ -73,10 +73,11 @@ ASSET tham chiếu hình ảnh (KHÔNG nạp vào game, chỉ để xem mẫu kh
   nhau, không dính lỗi bare-specifier / importmap.
 - Nạp FBX ASCII TRỰC TIẾP trong trình duyệt bằng FBXLoader (KHÔNG convert sang GLB,
   KHÔNG cần Python, KHÔNG cần server — mở bằng double-click chạy được).
-- Bức tranh pixel-art = 1 ẢNH PHẲNG: CanvasTexture 256×256 (PIC_PX) vẽ RUNTIME bằng
-  canvas 2D từ lưới màu N×N (upscale + outline đen quanh từng cụm) đặt lên 1 PlaneGeometry.
-  Material MeshBasicMaterial {map, transparent, alphaTest} -> ô đã rơi thành LỖ trong suốt.
-  (TRƯỚC ĐÂY: tranh là InstancedMesh các jelly cube; nay tranh KHÔNG còn là cube.)
+- Bức tranh = LƯỚI JELLY CUBE: 1 THREE.InstancedMesh dùng chung jellyGeo, N×N instance,
+  mỗi instance = 1 ô tranh đặt tại cellWorld(r,c), màu = PALETTE[chỉ-số]. Ô đã rơi (GRID=-1)
+  bị ẩn (zero-scale matrix). Cập nhật bằng drawPictureCubes() khi: khởi tạo, sau startFallCluster,
+  và mỗi frame khi NHÁY ĐỎ cụm bị chặn. (Đã thử dùng CanvasTexture 256×256 phẳng — bỏ, hoàn về cube.)
+  Tap-pick vẫn raycast 1 PlaneGeometry VÔ HÌNH (opacity 0) trùng vùng tranh -> hit.uv -> ô (r,c).
 - Khối thạch RƠI / trên belt vẽ bằng các THREE.Mesh riêng (pool jelly cube), KHÔNG instanced.
   Cube chỉ sinh ra KHI bấm 1 cụm (startFallCluster). Giữ tổng số cube ở mức vài trăm (nhẹ).
 - Có thể đóng gói thành 1 file HTML self-contained: nội tuyến mọi <script src>
@@ -135,30 +136,32 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
     chạy lúc game; muốn đổi tranh phải bake + khử-lẻ lại rồi dán vào LEVEL_BITMAP.) ***
     (Muốn đổi tranh: re-bake ảnh khác sang lưới chỉ số 20×20 + khử-lẻ thay vào LEVEL_BITMAP,
     hoặc chỉnh PALETTE cho khớp màu ảnh.)
-  - VẼ TRANH = 1 ẢNH PIXEL PHẲNG (cập nhật 2026-06-29, thay cho InstancedMesh cũ):
-    * 1 canvas 2D kích thước PIC_PX×PIC_PX (= 256×256) làm CanvasTexture, dán lên 1
-      THREE.PlaneGeometry rộng = N*cell (đúng phạm vi bàn cũ), tâm tại boardCenter.
-    * drawPictureTexture() vẽ lại canvas từ GRID: (1) tô màu mỗi ô (upscale N×N -> 256,
-      mỗi ô = 1 block ~12.8px); (2) VIỀN ĐEN (outline) CHỈ quanh CỤM BẤM ĐƯỢC: chạy
-      floodFill + canDrop cho từng cụm, CHỈ cụm có canDrop=true (có đường thoát xuống)
-      mới được vẽ viền; cụm BỊ CHẶN (không click thả được) KHÔNG có viền. Viền vẽ trên
-      cạnh ô của cụm bấm-được giáp ô KHÁC MÀU / ô TRỐNG / mép tranh. Bề dày viền
-      ow = max(2, round(cp*0.14)) px. (Fix 2026-06-29: trước đây MỌI cụm đều có viền kể
-      cả cụm không bấm được.)
-    * Material MeshBasicMaterial {map, transparent:true, alphaTest:0.5}: ô đã rơi
-      (GRID=-1) vẽ TRONG SUỐT -> để lại LỖ nhìn xuyên qua khung (phần màu đã RỜI tranh).
-    * texture.magFilter = NearestFilter (giữ nét pixel), encoding sRGB.
-    * Vẽ lại khi: khởi tạo, sau startFallCluster (ô rơi -> lỗ, outline tự khớp lại),
-      và mỗi frame trong lúc NHÁY ĐỎ (flash) cụm bị chặn (drawPictureTexture(flashSet,k)).
-  - CHẠM (tap, KHÔNG swipe): raycaster -> giao điểm với plane -> hit.uv -> ô (r,c):
-      c = floor(uv.x * N);  r = floor((1-uv.y) * N)   (flipY của texture đưa ô r=0 lên ĐỈNH).
-    Bấm trúng LỖ (GRID[r][c]<0) thì bỏ qua.
-  *** TÁCH THÀNH CUBE KHI BẤM (yêu cầu người chơi 2026-06-29): khi cụm hợp lệ rơi
-    (startFallCluster), MỖI ô của cụm biến thành 1 jelly cube KÍCH THƯỚC = 1 ô lưới HIỆN
-    TẠI (FALL_R = cell*0.46, đúng cỡ cube cũ) tại đúng vị trí ô, rồi xoá ô khỏi GRID và
-    drawPictureTexture() lại. Tức là VÙNG MÀU phẳng trên ảnh "tách" thành các khối cube
-    có cùng cỡ như trước, rồi rơi theo vật lý ở 4.4. Logic GRID vẫn là N=20 (cụm/flood/
-    canDrop/đếm thắng không đổi) — chỉ KHÂU HIỂN THỊ tranh đổi sang ảnh 256×256. ***
+  - VẼ TRANH = LƯỚI JELLY CUBE (InstancedMesh) — HOÀN NGUYÊN 2026-06-29 (b) theo yêu cầu
+    người chơi "chuyển lại kiểu lưới khối jelly cube thay vì texture". (Bản 2026-06-29 (a)
+    từng đổi sang ẢNH PIXEL PHẲNG CanvasTexture 256×256 — nay BỎ.)
+    * 1 THREE.InstancedMesh(jellyGeo, makeJellyMat(), N*N): mỗi ô tranh = 1 instance đặt tại
+      cellWorld(r,c), z = boardZ. jellyGeo bake ở cỡ 0.92*cell (để faller/belt cube có khe nhỏ),
+      NHƯNG instance tranh được PHÓNG TO bằng hằng PIC_FILL = 1/0.92 -> cạnh cube = đúng 1 cell ->
+      các cube tranh PHỦ KÍN, KHÔNG khe hở giữa hàng xóm (yêu cầu người chơi). Đây là scale RIÊNG
+      của tranh: cỡ cube rơi & cube trên băng chuyền KHÔNG đổi. castShadow + receiveShadow = true;
+      instanceMatrix DynamicDrawUsage.
+    * drawPictureCubes(flashSet, flashK) cập nhật lưới từ GRID: ô có màu -> setMatrixAt(vị trí)
+      + setColorAt(PALETTE[ci]); ô đã rơi (GRID=-1) -> setMatrixAt(zero-scale) để ẨN. Khi NHÁY
+      ĐỎ, các ô trong flashSet được pha màu về đỏ theo flashK (giống logic flash cũ).
+    * KHÔNG còn VIỀN ĐEN quanh cụm (đó là đặc thù của bản texture); cube nay phủ kín không khe nên
+      ranh giới cụm chỉ còn thấy qua MÀU + bevel góc. (Muốn rõ cụm bấm-được hơn: làm mờ/đậm/nhô cube.)
+    * Vẽ lại khi: khởi tạo (buildPicture), sau startFallCluster (ô rơi -> ẩn cube), và mỗi frame
+      khi đang flash (drawPictureCubes(flashSet,k)); flash kết thúc -> gọi 1 lần để xoá ám đỏ.
+  - CHẠM (tap, KHÔNG swipe): raycaster giao 1 PLANE VÔ HÌNH (pictureMesh, MeshBasic opacity 0,
+    depthWrite false) trùng vùng tranh -> hit.uv -> ô (r,c):
+      c = floor(uv.x * N);  r = floor((1-uv.y) * N).
+    Bấm trúng LỖ (GRID[r][c]<0) thì bỏ qua. (Plane chỉ để PICK; phần NHÌN là các cube.)
+  *** TÁCH THÀNH CUBE KHI BẤM: khi cụm hợp lệ rơi (startFallCluster), MỖI ô của cụm sinh 1
+    jelly cube FALLER cỡ 1 ô (FALL_R = cell*0.46) tại đúng vị trí ô, xoá ô khỏi GRID rồi
+    drawPictureCubes() lại (cube tranh của ô đó được ẩn, faller thế chỗ). Vì tranh nay cũng là
+    cube, "tách" là chuyển 1 cube TĨNH (instance) thành 1 cube ĐỘNG (faller) liền mạch về thị
+    giác. Logic GRID vẫn là N=20 (cụm/flood/
+    canDrop/đếm thắng không đổi) — chỉ KHÂU HIỂN THỊ tranh là lưới InstancedMesh cube. ***
 
 4.2 CHỌN CỤM (flood fill)
   - floodFill(r,c): lấy CỤM các ô CÙNG MÀU LIỀN KỀ (4 hướng: trên/dưới/trái/phải)
@@ -418,9 +421,8 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
 5. THAM SỐ CẤU HÌNH (gom vào 1 object CFG đầu file để chỉnh độ khó/layout)
 --------------------------------------------------------------------------------
   N            : kích thước lưới tranh LOGIC (mặc định 20) — đơn vị cụm/flood/cube.
-  PIC_PX       : độ phân giải ẢNH PIXEL của tranh (texture vuông, mặc định 256). HẰNG trong
-                 code (cạnh buildPicture), KHÔNG nằm trong CFG. Lưới logic vẫn N=20 nên cube
-                 tách ra giữ "kích thước hiện tại"; PIC_PX chỉ tăng độ nét HÌNH + chỗ vẽ outline.
+  (PIC_PX)     : ĐÃ BỎ — thuộc bản texture cũ. Tranh nay là InstancedMesh cube nên không còn
+                 độ-phân-giải-ảnh; "độ phân giải khối màu" = đúng N (20×20). Xem 4.1.
   cell         : cạnh 1 ô tranh (≈ 0.245) = CỠ 1 jelly cube khi cụm tách ra.
   boardCenter  : tâm tranh (≈ {x:0, y:4.8}).
   boardZ       : z của tranh.
@@ -553,11 +555,11 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
 --------------------------------------------------------------------------------
 6. HÀM CHÍNH NÊN CÓ (gợi ý cấu trúc code)
 --------------------------------------------------------------------------------
-  Khởi tạo : loadFBX, normalize, generateLevel, buildPicture (ẢNH PIXEL PHẲNG: tạo
-             CanvasTexture PIC_PX×PIC_PX + PlaneGeometry) + drawPictureTexture + hexCss,
+  Khởi tạo : loadFBX, normalize, generateLevel, buildPicture (LƯỚI CUBE: InstancedMesh
+             N*N jellyGeo + plane vô hình để pick) + drawPictureCubes,
              buildBelt + measureBeltChannel + buildBeltSurface, buildJars, buildJarQueue.
-  Tương tác: onTap -> raycast plane -> hit.uv -> ô (r,c) -> floodFill -> canDrop ->
-             startFallCluster (tách cụm thành cube + drawPictureTexture) / flashBlocked.
+  Tương tác: onTap -> raycast plane vô hình -> hit.uv -> ô (r,c) -> floodFill -> canDrop ->
+             startFallCluster (ẩn cube tranh + sinh faller + drawPictureCubes) / flashBlocked.
   Vòng update mỗi frame:
              stepFaller (mỗi faller; settle spin theo load) -> collideFallers (đếm load)
              -> tryFeedBelt ->
@@ -606,8 +608,8 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
 9. CHECKLIST NGHIỆM THU (game coi như đạt khi)
 --------------------------------------------------------------------------------
   [ ] Nạp đủ 5 FBX, hiển thị: tranh trong khung, belt oval nằm gần top-down, 4 lọ.
-  [ ] Tranh là ẢNH PIXEL 256×256, mỗi vùng màu bấm được có VIỀN ĐEN bao quanh.
-  [ ] Chạm 1 mảng màu -> vùng đó RỜI tranh (để lại lỗ), TÁCH thành jelly cube cỡ ô hiện
+  [ ] Tranh là LƯỚI JELLY CUBE 20×20 (InstancedMesh), mỗi ô 1 khối 3D màu theo palette.
+  [ ] Chạm 1 mảng màu -> các cube đó RỜI tranh (ô bị ẩn), TÁCH thành faller cỡ ô hiện
       tại rồi rơi; cụm bị chặn -> nháy đỏ, không rơi.
   [ ] Cube rơi có trọng lực, lăn qua tranh còn lại + tường phễu, chất đống ở miệng phễu.
   [ ] Cube tuồn LÊN belt và chạy vòng dù chưa có lọ cùng màu (không biến mất).
