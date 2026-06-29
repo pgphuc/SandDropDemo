@@ -382,6 +382,38 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
     - delivered >= total (đã giao đủ số cube).
   Khi WIN -> hiện overlay thắng.
 
+4.9 ĐỔI MÀN & NẠP ẢNH PNG CHO MÀN (thêm 2026-06-29)
+  Hai công cụ cho người chơi, gắn ở SCRIPT NGOÀI IIFE (cuối file) nên SỐNG QUA reload.
+  Cả hai đổi level bằng cách GHI localStorage rồi RELOAD trang (cơ chế load level có sẵn:
+  currentLevelIndex() đọc 'jelly_level'); KHÔNG dựng lại scene runtime.
+
+  (1) PHÍM MŨI TÊN ←/→ ĐỔI MÀN:
+      - keydown ArrowLeft  -> màn (CUR-1) ; ArrowRight -> màn (CUR+1) ; quay vòng theo
+        LEVEL_COUNT (sau màn cuối về màn 1, và ngược lại).
+      - gotoLevel(idx): localStorage['jelly_level']=idx, rồi location.href=location.pathname
+        -> reload BỎ mọi ?level= (để localStorage là nguồn quyết định, tránh ?level ghi đè).
+      - JellyDrop expose thêm CUR_LEVEL, LEVEL_COUNT để script ngoài biết đang ở màn nào.
+
+  (2) NÚT 📷 NẠP ẢNH PNG LÀM TRANH CHO MÀN ĐANG CHƠI:
+      - Nút #loadimg (topbar, cạnh nút Chơi lại) -> mở <input type=file accept=image/png>.
+      - Chọn .png -> BAKE ảnh thành 1 level chỉ-số-màu 20×20 NGAY TRÊN TRÌNH DUYỆT, đúng
+        pipeline OFFLINE ở 4.1:
+          a) downsample ảnh về 20×20 (canvas 2D, imageSmoothing=true -> lấy TRUNG BÌNH).
+          b) median-cut quantize -> tối đa K_MAX=7 màu; ra {palette:[hex...], indexOf()}.
+          c) mỗi ô lấy chỉ-số màu gần nhất -> lưới 20×20.
+          d) KHỬ Ô LẺ (deIsolate): lặp tới khi MỌI ô có ≥1 hàng xóm 4-hướng cùng màu; ô lẻ
+             đổi sang màu hàng xóm ĐÔNG NHẤT -> floodFill không bao giờ chọn cụm 1 ô.
+          e) bitmap = mảng 20 chuỗi, mỗi ký tự = chỉ-số màu '0'..'6' (String.fromCharCode 48+v).
+      - LƯU localStorage['jelly_level_img_<idx>'] = JSON {palette, bitmap}, rồi gotoLevel(idx)
+        (reload CHÍNH màn đang chơi) -> ảnh thành tranh của màn đó.
+      - ÁP OVERRIDE: trong IIFE, NGAY SAU currentLevelIndex() (TRƯỚC khi đọc PALETTE/
+        LEVEL_BITMAP), nếu có 'jelly_level_img_<CUR_LEVEL>' thì gán đè LEVELS[CUR_LEVEL].palette
+        & .bitmap. Vì generateLevel/buildPicture đọc qua các biến này nên dùng luôn ảnh người
+        chơi, KHÔNG đụng tới phần còn lại của game. Xoá localStorage -> trả lại tranh gốc.
+      - Override LƯU RIÊNG TỪNG MÀN: ảnh nạp ở màn 1 chỉ thay tranh màn 1 (key theo idx).
+  Hàm/biến (script cuối file): gotoLevel, quantize (median-cut), deIsolate, bakeAndLoad;
+  hằng N=20, K_MAX=7. Override đọc trong IIFE cạnh CUR_LEVEL.
+
 --------------------------------------------------------------------------------
 5. THAM SỐ CẤU HÌNH (gom vào 1 object CFG đầu file để chỉnh độ khó/layout)
 --------------------------------------------------------------------------------
@@ -542,6 +574,8 @@ Bố cục từ TRÊN xuống DƯỚI trên màn hình: TRANH (trên) -> PHỄU 
 7. UI / VỎ GAME
 --------------------------------------------------------------------------------
   - Topbar + thanh PROGRESS đặt ở ĐỈNH màn hình (thoáng vùng chơi).
+    Topbar trái: nút Chơi lại (↻) + nút 📷 NẠP ẢNH PNG cho màn (xem 4.9); giữa: nhãn LEVEL;
+    phải: nút Cài đặt (⚙). Phím ←/→ đổi màn. Có dòng hint nhỏ ở đáy: "← → đổi màn · 📷 nạp ảnh".
   - Hint nhỏ ("Chạm vào mảng màu để thả").
   - Loader (chờ nạp FBX, vài giây).
   - Overlay WIN khi thắng.
